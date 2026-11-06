@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "carin-viewer",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-m", "http.server", "8738", "--directory", "C:/Users/duhgl/OneDrive/Documents/P38_Nav/viewer"],
+      "port": 8738
+    }
+  ]
+}

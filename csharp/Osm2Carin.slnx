@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Osm2Carin.Cli/Osm2Carin.Cli.csproj" />
+    <Project Path="src/Osm2Carin.Core/Osm2Carin.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Osm2Carin.Tests/Osm2Carin.Tests.csproj" />
+  </Folder>
+</Solution>

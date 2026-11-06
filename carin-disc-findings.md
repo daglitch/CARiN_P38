@@ -92,8 +92,240 @@ The decoder was recovered from head-unit firmware by **OpenCarin** (https://gith
 - **0x18 TMC tables:** IDs 0x051, 0x061, 0x191 = **CC 1 (USA), LTN 5, 6, 25**.
 - **0x17 TMC locations:** **56-byte records** at DB-REL 26 (vs 100 at DB-REL 34). Fields: code, type, road number/road name/location name/second name pointers, road code, next point, and **location X/Y at `+0x20/+0x24`**. Example: "CA-12 / WRIGHT RD" decodes to 38.4274° N, 122.7690° W. Area names are US regions ("SAN FRANCISCO METRO"…).
 
+### Phase 0 (2026-11-05): rebuilding and patching the disc
+Tools: `tools/cdimage.py` (raw image split/build/verify), `tools/phase0_roundtrip.py`, `tools/phase0_patch.py`, tests in `tests/test_phase0.py`. Output under `out/phase0/`.
+
+1. **Raw image rebuilt byte-identically [verified].** `cdimage.py split` → `track1.iso` (186,541 Form 1 sectors of user data = the ISO volume size in the PVD) + `audio.raw` (300 sectors). `cdimage.py build` regenerates sync, BCD MSF header (LBA + 150), subheader, EDC and P/Q ECC for every sector, adds 150 zero Form 2 postgap sectors, appends the audio and writes the cue. The result has the same SHA-1 as the original `.bin`, and the cue matches line for line (CRLF). Sector facts:
+   - every data sector is Mode 2 Form 1 with subheader `00 00 08 00` (no EOR/EOF bits, not even at file ends);
+   - postgap: subheader `00 00 20 00`, zero data, **EDC present** (`3f13b0be`);
+   - ECC computed with the 4 header bytes zeroed (Mode 2 rule). An independent check: every original sector regenerates from its own user data.
+2. **CF=1 type 0x00 round trip with OpenCarin [verified on a sample].** DB-REL 26, subrel 8, 2048-byte units. Every 5th CF=1 street parcel (**4,806 of 24,028**): decode → `encode_type00` → decode matched on **4,806/4,806**, 0 errors, all fit their extent; re-encoded 18.90 MB vs 19.04 MB original (−0.75%). About 0.2 s per parcel (`out/phase0/roundtrip-step5.json`).
+   - Re-encoded bytes are **never bit-identical** to the disc: OpenCarin uses no text dictionary and picks inheritance flags afresh. They match **after decoding** (bytes 4.. of the decoded block), and the re-encoded block is 0.75% *smaller*, so it always fits its original extent.
+   - Header bytes 0–7 and the 116-byte plain prolog (incl. the bounding box at `+0x44`) are unchanged.
+3. **Test images [built; car test pending].** Nothing moves: same blocks, sectors, ISO directory and file sizes.
+   - `test-patched.bin/.cue`: POI name `land rover san jose` → `land rover p38 test`, in place in 4 plain 0x10 (POI index) blocks (ISO sectors 31643, 31837, 43368, 43376). The dealer is at 5080 Stevens Creek Blvd, San Jose, 408-247-7600. Tests integrity checks.
+   - `test-reencoded.bin/.cue`: the above, plus the street `stevens creek blvd` → `stevens creek test` in the 12 CF=1 street parcels that carry it (Cupertino → San Jose, lat ≈ 37.32, lon −122.09 … −121.93), re-encoded with `encode_type00`. Tests whether the unit accepts OpenCarin's bitstream. The street directory (0x0E), POI addresses (0x10) and coarse levels are not changed, so destination entry still lists "stevens creek blvd".
+   - Both: EDC/ECC verified on all 186,691 data sectors; reading back the `.bin` (`cdimage.py split` and `carin.py iso`) gives exactly the patched ISO.
+4. OpenCarin notes: `carin/osm` and `carin/serializer` are **empty packages** in the cloned revision (`1e5e077`), so Phase 1+ has to write the OSM ingestion and the DB serializer. `carin/parser/volume_edit.py` (in-place block rewrite) matches what `phase0_patch.py` does. Its `carin` package name clashes with our `tools/carin.py` when both are imported; import ours under another name.
+
+### Phase 1 (2026-11-05): OSM download, road model, size estimate
+Package `tools/osm2carin/` (run from `tools/`: `py -m osm2carin regions | estimate | download | model | build`). Tests in `tests/test_osm2carin.py` (a synthetic OSM town, no download needed).
+- **Regions:** Geofabrik `index-v1-nogeom.json` (cached 7 days). A region is named by its id (`us/california`), its name ("Rhode Island") or an ISO code (`US-NV`, `DE`). Downloads are cached in `out/cache/`, resumable, and MD5-checked against Geofabrik's `.md5`.
+- **Road model** (`model.py`, pyosmium 4.3, filters in C++):
+  - three passes: road ways + restrictions; node coordinates (IdFilter); POI nodes;
+  - ways are split at shared nodes and way ends, and closed ways in the middle;
+  - output: links with from/to node, shape, length (m), both bearings, class, subtype, form, direction, speed, junction type, toll/bridge/tunnel/unpaved, name and ref;
+  - turn restrictions are mapped to (from link, via node, to link); restrictions via a way are dropped and counted;
+  - Nevada takes ~65 s.
+- **Original disc's Nevada street level [seen]:** 222,921 links, 135,904 km (`osm2carin.survey`, rough NV polygon). km by class:
+
+  | Class | km | Speed category | Notes |
+  |---|---|---|---|
+  | 0 | 1,914 | 31 | |
+  | 1 | 3,345 | 22 | |
+  | 2 | 2,755 | 22 | |
+  | 3 | 3,946 | 16 | |
+  | 4 | 17,307 | 11, 16 on collectors | |
+  | 5 | 621 | 5 | |
+  | 6 subtype 1 | 106,017 | 11 | rural dirt roads |
+
+  - Freeway ramps are class **3** (some 2/4), forms 1/2.
+  - Forms 8/9/0xA occur on only 50 links; form 7 on 2,038 (OpenCarin: a compiler artefact, write 0xB/0xC).
+  - One-way links use direction 1 and 2 about equally: the geometry is not reversed. Our model reverses the geometry and always writes 1.
+  - 0xB marks classes 1–3 plus the speed-16 class-4 collectors.
+- **Mapping chosen** (`attrs.py`):
+
+  | OSM `highway` | Class | Speed category |
+  |---|---|---|
+  | motorway | 0 | 31 |
+  | trunk | 1 | 22 |
+  | primary | 2 | 22 |
+  | secondary | 3 | 16 |
+  | `*_link` ramps | 3 | 16 |
+  | tertiary | 4 (form 0xB) | 16 |
+  | residential, unclassified | 4 | 11 |
+  | living_street, service=alley | 5 | 5 |
+  | service, track | 6/1 | 11 |
+  | private access | 6/3 | |
+
+  - Speed is a default per road type, as on the disc; OSM `maxspeed` is not used.
+  - Slip roles come from tracing along the ramp to the first main road at each end.
+  - The default profile keeps:
+    - tracks that are TIGER-imported, named or grade 1–3;
+    - service roads, except driveways, parking aisles, drive-throughs, emergency access and private ones.
+  - Result for Nevada: **130,810 km** (disc 135,904 km).
+    - We give OSM `unclassified` (26k km, mostly TIGER rural roads) class 4, where Navtech used 6/1. That keeps them routable (the planner rejects class 6).
+    - OSM has 2× the links (more junctions) and 2.4× the shape points per link.
+- **POIs:** a whitelist of navigation categories (`poi.py`: fuel, parking, car dealers, hotels, restaurants, hospitals, police, airports, casinos…). Nodes and area centroids carry name, brand, phone and address. Everything else (benches, bins…) is counted as dropped. Nevada: 27,357 POIs. The disc's 0x10 has ≥160,240 POIs (distinct phone numbers).
+- **Size model** (`estimate.py`, `calibration.json`):
+  - Original CF=1 street parcels, least squares over 1,212: **21.5 B/link + 3.14 B/shape point + 1,348 B/parcel** (≈125 links per parcel; error 13%).
+  - Per-link share of the other blocks that scale with the network (0x01–0x04, 0x08, 0x09, 0x0E, 0x0F): 60.3 B.
+  - POI blocks: 246 B per POI.
+  - Everything else is fixed: 36.6 MB.
+  - The estimate before download uses Nevada's links/shape points/POIs per extract byte. A 15% margin is added.
+  - Sector overhead outside `carindb`: 366 + 150 + 150 + 300.
+  - Nevada: ~102 MiB → 16% of a 74-min CD-R. California (1.27 GB extract, model in 8 min):
+    - 4,011,100 links, 675,258 km, 16.9 M shape points, 299,142 POIs, 65,836 / 70,878 restrictions mapped;
+    - **~587 MiB → 90.5% of a 74-min / 83.7% of an 80-min CD-R**, so it fits, close to full. The extract-size estimate before download said 706 MiB, ~20% high: Nevada has more road per extract byte than California.
+    - California + Nevada together, like the original disc, would come to about 648 MiB: at the 74-min limit, ~92% of an 80-min disc. That needs multi-region input, which isn't built yet.
+
+### Phase 2 (2026-11-05): road tiles for levels 0–3
+Code: `tools/osm2carin/tile26.py` (DB-REL 26 tile model), `tiles.py` (OSM model → tiles), `link.py` (block IDs, cross references, encoding), `validate.py` (checks, viewer export), `fmt.py` (record-size table). CLI: `py -m osm2carin tiles --region …`. Tests: `tests/test_tiles.py`.
+
+**Tile layout at DB-REL 26 [verified: parse → build is byte-identical on all 38,326 road tiles of the disc, plain and CF=1 decoded].**
+- Sections follow each other in the order 0 1 2 3 4 5 6 7 9 8 10 11 12 13 14, then the text blob. Each starts at the end of the previous one.
+  - Sections holding u32s (6, 8, 9, 10, 13) are 4-aligned; the others are 2-aligned.
+  - An empty S13 (and S14 in coarse tiles) has offset 0 and takes no space.
+- S3 and S4 hold count + 1 records.
+- Pointer fields (absolute offsets):
+  - S4 link `+0/+2` S5|S6 node, `+4` S7, `+6/+8` next link at start/end node, `+0x12` S10, `+0x14` S12;
+  - street only: `+0x18` S2, `+0x1C` S11;
+  - S5/S6 `+4`, S3 `+0/+2`;
+  - S0 `+0` text, `+4` S14;
+  - S1 `+0/+2` text, `+4` S0, `+6/+8` S14;
+  - S2 `+0` street name, `+2` alternate locality, `+4` S1, `+6/+8` S14;
+  - S14 `+0` text;
+  - S11 `+0/+2` text.
+  - A few fields hold non-pointer values (S2 `+8` = 4 in CF=1 tiles); these are kept as literals.
+- Street link record (30 B), beyond OpenCarin's table:
+  - `+0x11` high nibble always 2; `+0x16` always 0;
+  - `+0x1A` = 0x10 | bridge bits;
+  - `+0x1B` = built-up (same as `+0x0A` bit 7) | width << 1 | house numbers.
+- Coarse links are 24 B: up to `+0x16`, no names.
+- Node flags (S5/S6 `+6`):
+  - bits 15–14 = 3 − the highest coarse level the node reaches;
+  - bit 12 S5, bit 13 S6;
+  - bits 8–11 by degree: S5 1 / 5 / 0; S6 with one link 5.
+  - Checked on 50k nodes.
+- Ordering rules, all holding on the disc:
+
+  | Rule | Holds |
+  |---|---|
+  | Link start node has the lower (u, v) | 73,686 / 73,686 sampled |
+  | Links grouped by class in S3 | always |
+  | S5 nodes sorted by (u, v) inside each group | always |
+  | Node cycles clockwise by leaving bearing, from the smallest | 99.96% |
+
+- Header words:
+  - street tile `+0x54` = its house-number block (0x04), `+0x58` = its 0x03 parent, `+0x5C` = 0;
+  - street tile `+0x60/+0x64/+0x68` = three u32s, **meaning unknown** (they correlate with the longest link, r ≈ 0.5–0.66). Coarse tiles hold 2,147,483 there;
+  - street tile `+0x6C` u16 = 5–17, **unknown**; `+0x6E` = 10; `+0x70` = 0x0101 with house numbers, else 1;
+  - coarse tile `+0x58` = the next coarser tile (0 on 0x01), `+0x5C` = the S8 grid cell size, `+0x70` = 1.
+- Tiles:
+  - Street tiles are 81,920 × 40,960 up to 1,310,720 square; coarse up to 2,621,440. Sides are 40,960·2ᵏ, w = h or w = 2h.
+  - Corners lie on (16384, 1280) mod 40,960. Bigger tiles are *not* aligned to multiples of their size.
+  - Decoded street tiles are at most 8 units, coarse at most 5.
+  - Sub-revision 8 stores the S6 twin offset in 14 bits, so a twin's S6 record must start below 16,384.
+- Levels: 0x03 keeps classes ≤ 3, 0x02 ≤ 2, 0x01 ≤ 1. S8 of a coarse tile is a column-major grid of next-lower-level BLOCK_IDs.
+- Names in a street tile:
+  - S0 = [null, country (`+2` = 0xE0 USA), end];
+  - S1 = [null, city (+ county), end];
+  - S2 = one record per street name (shared by its links), sorted;
+  - S14 = country + 5 other-language names, city, streets (type 0x08; 0x10 for route numbers), county, localities;
+  - the blob ends on a NUL.
+- Physical order on the disc:
+  1. per road level, its 0x09 spatial-index cells, then the tiles (street tiles, then house numbers 0x04);
+  2. 0x03, 0x02, 0x01;
+  3. the background layers.
+
+**What `osm2carin tiles` writes.**
+- Tiling:
+  - The same tree of alternate halves on the same grid. Street tiles split until the estimate fits.
+  - Shapes are simplified at 2 m (5/10 m in tiles that are still full).
+  - Links are cut at tile edges into twin S6 edge nodes. Coarse tiles are unions of street tiles, so coarse edge nodes are street edge nodes.
+- Coarse links: chains through nodes where only two kept roads with the same class/speed/form/direction meet, simplified at 20 / 60 / 150 m.
+- Records follow every rule above:
+  - node cycles, node flags and S3 groups;
+  - S10 turn bans from OSM restrictions (owner = from link; flag 0/1 = the owner's start/end node; `only_*` bans every other exit);
+  - names in the original's layout, ASCII-folded to what the CF=1 text code can carry (no `!"#$%&`).
+- Street tiles are stored CF=1 (OpenCarin `encode_type00`), coarse tiles plain. Block IDs are allocated in the disc's order.
+- Checks on every run: CF=1 decode = what we encoded; tile26 round trip; all rules; geometry read back with `tools/carin.py`; twins; coarse nodes on street nodes; parents contain children.
+
+**Nevada:**
+- **6,380 tiles in 15,246 units (29.8 MiB):**
+  - 4,939 CF=1 street tiles (13,680 units);
+  - 859 / 469 / 113 tiles for 0x03 / 0x02 / 0x01.
+- Every check passes.
+- In the densest Las Vegas tiles (already the smallest size on the disc) the tile has to shed links:
+  - 16,153 class-6 pieces dropped (service roads, which the planner can't route on anyway);
+  - 164 class-5 pieces dropped;
+  - 655 class-4 pieces dropped (0.13% of links).
+- About 25 minutes, mostly CF=1 encoding.
+
+**Assumptions to test on the unit** (not on the disc in this form):
+- the three unknown street-tile u32s, set to the coarse tiles' 2,147,483;
+- `+0x6C` = 14;
+- the built-up bit (tile ≤ 327,680 and class ≥ 2);
+- one "city" per tile (the region name) until Phase 3 brings real admin areas;
+- S12 (6-byte entries on the disc, probably TMC) left empty;
+- no house numbers (`+0x54` = 0).
+
+### C# port (2026-11-05)
+`csharp/` holds the same pipeline in C#, with its own PBF reader and a port of OpenCarin's CF=1 type 0x00 codec. It produces the Python tools' output byte for byte:
+- the Nevada road model, in every array;
+- the Nevada road tiles, all 6,380 blocks, on disc and decoded.
+
+The checks against the original disc pass too:
+- the `.bin` rebuild;
+- the CF=1 codec, matching OpenCarin on 480 tiles and round-tripping all 24,028;
+- the tile model, round-tripping all 38,326 road tiles.
+
+Exact parity needed three things reproduced exactly: numpy's pairwise float sums, CPython's `math.hypot` (Douglas-Peucker near-ties), and Python's floor-modulo and rounding. Nevada:
+
+| Step | Python | C# |
+|---|---|---|
+| Road model | 55 s | 7 s |
+| Tiles + link + checks | ~25 min | 18 s |
+
+Each street tile is CF=1-encoded once: block IDs only sit in fixed-width fields, so they are patched in after allocation.
+
+**California in C#** (1.27 GB extract):
+- road model in 46 s: 4,011,475 links, 299,219 POIs;
+- road tiles in 95 s: **49,366 blocks, 97,716 units (190.9 MiB)**, every check passing;
+- the fullest tiles dropped 79,789 class-6, 3,429 class-5 and 1,325 class-4 pieces (0.03% of links).
+
+Python would take an estimated 3–4 hours for the tiles.
+
+Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at 0. The encoder then writes every link length and coordinate delta as a 16-bit escape. Choosing the widths per tile, as the disc does, would shrink the street tiles noticeably. Not done yet, so that both implementations stay identical.
+
+### POI categories (2026-11-05, OpenCarin issue #24)
+Block 0x07 section 0 is the list of POI category codes on the disc (6 B records: code, name offset, 0; every name is empty, so the unit uses its own names). On CD-ID 5944 it holds **39 codes**, and the 0x06 POI records (20 B, `T[0x32]`, `+0x0A` category) use exactly those 39 (249,000 records).
+
+Names: * = read on a CNI1 (issue #24); the rest come from the POIs filed under the code on this disc.
+
+| Code | Category | Code | Category |
+|---|---|---|---|
+| 11 | auto services / dealers | 37 | landmarks* |
+| 12 | petrol* | 38 | amusement |
+| 13 | car rental* | 39 | parks* |
+| 14 | parking* | 40 | convention / business facilities |
+| 15 | park & ride | 41 | hospitals* |
+| 16 | rest areas* | 42 | police |
+| 17 | auto clubs (AAA) | 43 | city halls |
+| 20 | tourist attractions | 47 | shopping* |
+| 21 | hotels* | 48 | towns* |
+| 22 | restaurants* | 50 | golf* |
+| 23 | banks | 51 | rail* |
+| 24 | civic centres | 52 | airports* |
+| 25 | libraries | 53 | ferries* |
+| 26 | courts | 54 | bus* |
+| 30 | banks / cash (same POIs as 23) | 55 | marinas |
+| 31 | tourist info* | 56 | schools / universities* |
+| 32 | museums* | 57 | theatres, casinos, leisure* |
+| 35 | sports* | 58 | border crossings |
+| | | 59 | BMW dealers |
+| | | 60 | same POIs as 11 |
+| | | 61 | business / commercial |
+
+`poi.py` maps our OSM categories onto these codes. OpenCarin `01-architecture.md` §4.4.2 documents the whole POI index:
+- city category ranges (0x0C S3), brand ranges (S5);
+- 0x11 letter tries, two 0x10 copies of branded POIs, the 0x06 map records;
+- the writer's rules: names sorted inside each first-letter leaf; road levels linked near the car.
+
+That index, written from scratch, was listed, searched and routed to on a CNI1. Phase 2b follows it.
+
 ### Still open
-1. **Does the head unit check data integrity?** That could be a per-block CRC, a whole-DB checksum, or the CD-ID/BSW-REL list. Test: burn a straight copy, then one with a single POI name patched at the same length. Untested.
+1. **Does the head unit check data integrity?** That could be a per-block CRC, a whole-DB checksum, or the CD-ID/BSW-REL list. The test images are built (Phase 0 above); the car test is pending.
 2. **Writing a new disc (the OSM converter).** OpenCarin targets this ("compile OpenStreetMap data into bootable navigation discs") and includes a CF=1 encoder for type 0x0E, plus `encode_type00`. Next steps:
    - check its serializer against DB-REL 26 and 2048-byte units;
    - round-trip one of our parcels (decode → encode → decode);
