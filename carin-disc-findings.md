@@ -108,6 +108,67 @@ Tools: `tools/cdimage.py` (raw image split/build/verify), `tools/phase0_roundtri
    - Both: EDC/ECC verified on all 186,691 data sectors; reading back the `.bin` (`cdimage.py split` and `carin.py iso`) gives exactly the patched ISO.
 4. OpenCarin notes: `carin/osm` and `carin/serializer` are **empty packages** in the cloned revision (`1e5e077`), so Phase 1+ has to write the OSM ingestion and the DB serializer. `carin/parser/volume_edit.py` (in-place block rewrite) matches what `phase0_patch.py` does. Its `carin` package name clashes with our `tools/carin.py` when both are imported; import ours under another name.
 
+### Phase 1 (2026-11-05): OSM download, road model, size estimate
+Package `tools/osm2carin/` (run from `tools/`: `py -m osm2carin regions | estimate | download | model | build`). Tests in `tests/test_osm2carin.py` (a synthetic OSM town, no download needed).
+- **Regions:** Geofabrik `index-v1-nogeom.json` (cached 7 days). A region is named by its id (`us/california`), its name ("Rhode Island") or an ISO code (`US-NV`, `DE`). Downloads are cached in `out/cache/`, resumable, and MD5-checked against Geofabrik's `.md5`.
+- **Road model** (`model.py`, pyosmium 4.3, filters in C++):
+  - three passes: road ways + restrictions; node coordinates (IdFilter); POI nodes;
+  - ways are split at shared nodes and way ends, and closed ways in the middle;
+  - output: links with from/to node, shape, length (m), both bearings, class, subtype, form, direction, speed, junction type, toll/bridge/tunnel/unpaved, name and ref;
+  - turn restrictions are mapped to (from link, via node, to link); restrictions via a way are dropped and counted;
+  - Nevada takes ~65 s.
+- **Original disc's Nevada street level [seen]:** 222,921 links, 135,904 km (`osm2carin.survey`, rough NV polygon). km by class:
+
+  | Class | km | Speed category | Notes |
+  |---|---|---|---|
+  | 0 | 1,914 | 31 | |
+  | 1 | 3,345 | 22 | |
+  | 2 | 2,755 | 22 | |
+  | 3 | 3,946 | 16 | |
+  | 4 | 17,307 | 11, 16 on collectors | |
+  | 5 | 621 | 5 | |
+  | 6 subtype 1 | 106,017 | 11 | rural dirt roads |
+
+  - Freeway ramps are class **3** (some 2/4), forms 1/2.
+  - Forms 8/9/0xA occur on only 50 links; form 7 on 2,038 (OpenCarin: a compiler artefact, write 0xB/0xC).
+  - One-way links use direction 1 and 2 about equally: the geometry is not reversed. Our model reverses the geometry and always writes 1.
+  - 0xB marks classes 1–3 plus the speed-16 class-4 collectors.
+- **Mapping chosen** (`attrs.py`):
+
+  | OSM `highway` | Class | Speed category |
+  |---|---|---|
+  | motorway | 0 | 31 |
+  | trunk | 1 | 22 |
+  | primary | 2 | 22 |
+  | secondary | 3 | 16 |
+  | `*_link` ramps | 3 | 16 |
+  | tertiary | 4 (form 0xB) | 16 |
+  | residential, unclassified | 4 | 11 |
+  | living_street, service=alley | 5 | 5 |
+  | service, track | 6/1 | 11 |
+  | private access | 6/3 | |
+
+  - Speed is a default per road type, as on the disc; OSM `maxspeed` is not used.
+  - Slip roles come from tracing along the ramp to the first main road at each end.
+  - The default profile keeps:
+    - tracks that are TIGER-imported, named or grade 1–3;
+    - service roads, except driveways, parking aisles, drive-throughs, emergency access and private ones.
+  - Result for Nevada: **130,810 km** (disc 135,904 km).
+    - We give OSM `unclassified` (26k km, mostly TIGER rural roads) class 4, where Navtech used 6/1. That keeps them routable (the planner rejects class 6).
+    - OSM has 2× the links (more junctions) and 2.4× the shape points per link.
+- **POIs:** a whitelist of navigation categories (`poi.py`: fuel, parking, car dealers, hotels, restaurants, hospitals, police, airports, casinos…). Nodes and area centroids carry name, brand, phone and address. Everything else (benches, bins…) is counted as dropped. Nevada: 27,357 POIs. The disc's 0x10 has ≥160,240 POIs (distinct phone numbers).
+- **Size model** (`estimate.py`, `calibration.json`):
+  - Original CF=1 street parcels, least squares over 1,212: **21.5 B/link + 3.14 B/shape point + 1,348 B/parcel** (≈125 links per parcel; error 13%).
+  - Per-link share of the other blocks that scale with the network (0x01–0x04, 0x08, 0x09, 0x0E, 0x0F): 60.3 B.
+  - POI blocks: 246 B per POI.
+  - Everything else is fixed: 36.6 MB.
+  - The estimate before download uses Nevada's links/shape points/POIs per extract byte. A 15% margin is added.
+  - Sector overhead outside `carindb`: 366 + 150 + 150 + 300.
+  - Nevada: ~102 MiB → 16% of a 74-min CD-R. California (1.27 GB extract, model in 8 min):
+    - 4,011,100 links, 675,258 km, 16.9 M shape points, 299,142 POIs, 65,836 / 70,878 restrictions mapped;
+    - **~587 MiB → 90.5% of a 74-min / 83.7% of an 80-min CD-R**, so it fits, close to full. The extract-size estimate before download said 706 MiB, ~20% high: Nevada has more road per extract byte than California.
+    - California + Nevada together, like the original disc, would come to about 648 MiB: at the 74-min limit, ~92% of an 80-min disc. That needs multi-region input, which isn't built yet.
+
 ### Still open
 1. **Does the head unit check data integrity?** That could be a per-block CRC, a whole-DB checksum, or the CD-ID/BSW-REL list. The test images are built (Phase 0 above); the car test is pending.
 2. **Writing a new disc (the OSM converter).** OpenCarin targets this ("compile OpenStreetMap data into bootable navigation discs") and includes a CF=1 encoder for type 0x0E, plus `encode_type00`. Next steps:
