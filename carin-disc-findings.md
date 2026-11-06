@@ -324,6 +324,43 @@ Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at
   - Our coarse tiles have finer edges than the original's, so a coarse layer's cell side is halved until no cell needs more than 64 × 64 items (the disc's maximum).
   - Checked on every run: the index finds every tile at its centre (Nevada 6,415 / 6,415; California 49,372 / 49,372).
 
+### Phase 3a (2026-11-06): our roads on the original disc
+- **Physical layout of the original `carindb` [seen].** Every block type sits in one run:
+  - system blocks, cities and tries, street directory, POI index (units 0–43,480);
+  - the POI layer [0x08][0x09][0x06] (43,480–49,196);
+  - then **all road data in one span, units 49,196–168,866**: the street layer [0x08][0x09][0x00], the house numbers 0x04, and the 0x03 / 0x02 / 0x01 layers, each [0x08][0x09][tiles];
+  - then the background layers 0x16, 0x15, 0x1C, 0x14, 0x1D, 0x1E (each [0x08][0x09][tiles]), 0x18 and 0x17 (to 186,175).
+- **No size fields.** The superblock, 0x13 and 0x07 hold no total-units value. Only the ISO knows how long `carindb` is.
+- **0x07 layer directory, DB-REL 26 [seen].**
+  - Descriptors S0 {0x138, 39} (POI categories), S1 {0x224, 3} (TMC). Records at `+0x10`, 24 B each.
+  - Record 0 → 0x00 (`0x00c02c08`), 1 → 0x06, 2 → 0x01, 3 → 0x02, 4 → 0x03, 5–7 and 9–11 background, 8 empty.
+  - The trailer is at `+0x130`.
+- **The ISO has two primary volume descriptors** (sectors 16 and 17, the same root at LBA 21) and a terminator at 18. Both carry the volume size.
+- **The graft (`osm2carin disc`, `Graft.cs`).** OpenCarin moved a tile to the end of `carindb` on a CNI1 and the unit found it (01-architecture §4.4.1): the unit reaches blocks only through BLOCK_IDs, and `carindb` may grow. So the graft keeps every original block in place and appends ours:
+  - our four road layers are appended from unit 186,175;
+  - 0x07 records 0, 2, 3, 4 get our grids' BLOCK_IDs;
+  - the ISO's directory record and both volume sizes grow.
+
+  Nothing else changes: 13 bytes of the original `carindb` differ. The old roads stay on the disc but nothing on the map leads to them. The old cities, streets, POIs and TMC still point at them, so those pointers stay valid instead of landing in our data. The cost is space; a later phase can drop the old roads and pack.
+- **Results [verified offline].**
+
+  | | California | Nevada |
+  |---|---|---|
+  | `carindb` units | 275,074 | 198,672 |
+  | Blocks | 147,133 | 103,566 |
+  | Disc sectors | 276,040 (61.3 min) | 199,638 (44.4 min) |
+  | Image | 619 MiB | 447 MiB |
+  | References in our blocks, all to the right block type | 1,514,118 | 177,371 |
+  | Tiles found from 0x07 | 49,372 / 49,372 | 6,415 / 6,415 |
+
+  Both fit a 74-minute CD-R. EDC/ECC is correct on every sector. The block chain covers the whole file.
+- **Read back by OpenCarin** (`tools/phase3a_check.py`, with its spatial lookup set to the DB-REL 26 directory layout):
+  - it detects 2048-byte units, DB-REL 26 and sub-revision 8;
+  - it walks the chain and decodes every one of our tiles;
+  - its lookup from 0x07 finds every tile;
+  - Las Vegas and Reno resolve to our tiles on all four levels.
+- **Unverified until the car test:** our coarse layers' grids are finer than the original's. 0x01, 0x02 and 0x03 have 256² cells against the disc's 32² / 64² / 128², because their tile edges are finer (Phase 3 above). The format allows it, since the cell side is read from the 0x08 header, but no original disc does it.
+
 ### POI categories (2026-11-05, OpenCarin issue #24)
 Block 0x07 section 0 is the list of POI category codes on the disc (6 B records: code, name offset, 0; every name is empty, so the unit uses its own names). On CD-ID 5944 it holds **39 codes**, and the 0x06 POI records (20 B, `T[0x32]`, `+0x0A` category) use exactly those 39 (249,000 records).
 

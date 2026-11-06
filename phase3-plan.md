@@ -2,7 +2,13 @@
 
 Status 2026-11-06:
 - **Done:** road layers 0x00–0x03, on the disc's quadtree, with their spatial index (0x08 grids, 0x09 cells). Every lookup finds its tile.
-- **Not started:** everything below.
+- **3a done offline** (`osm2carin disc`, `phase3a-car-test.md`). It deviates from the steps below:
+  - every original block stays in place and our layers are appended, so nothing is moved or rewritten;
+  - only 0x07 records 0, 2, 3, 4 change;
+  - the old cities, streets, POIs and TMC keep pointing at the old roads, which stay on the disc. So nothing is neutralised yet.
+
+  Car test pending.
+- **Not started:** 3b, 3c, 3d.
 
 ## Approach: graft onto the original database
 
