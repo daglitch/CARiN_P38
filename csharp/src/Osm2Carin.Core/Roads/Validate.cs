@@ -156,7 +156,7 @@ public static class Validate
         problems.Count > 0 || res.Any(kv => kv.Key.Contains("BROKEN") || kv.Key.Contains("OFF THE") || kv.Key.Contains("NO TILE"));
 
     /// <summary>Viewer data in the format of tools/carin.py export / streets.</summary>
-    public static JsonObject ExportViewer(List<TileSpec> specs, string outDir, string? viewerHtml = null)
+    public static JsonObject ExportViewer(List<TileSpec> specs, string outDir, string? viewerHtml = null, string? title = null)
     {
         const double Cell = 0.1;
         string data = Path.Combine(outDir, "data");
@@ -198,7 +198,22 @@ public static class Validate
         foreach (var (k, d) in cells) File.WriteAllText(Path.Combine(data, "l0", k + ".json"), Json(d.attrs, d.lines));
         File.WriteAllText(Path.Combine(data, "l0", "index.json"),
             "{\"cell\": 0.1, \"cells\": [" + string.Join(", ", cells.Keys.Select(k => $"\"{k}\"")) + "], \"format\": \"delta-1e-5\"}");
-        if (viewerHtml != null && File.Exists(viewerHtml)) File.Copy(viewerHtml, Path.Combine(outDir, "index.html"), true);
+        if (viewerHtml != null && File.Exists(viewerHtml))
+        {
+            // The page is the disc viewer (viewer/index.html); label it as our build, and say that the
+            // OpenStreetMap basemap under the lines shows every road, inside the region or not.
+            var html = File.ReadAllText(viewerHtml);
+            if (title != null)
+            {
+                var t = System.Net.WebUtility.HtmlEncode(title);
+                html = html.Replace("<title>P38 CARiN disc viewer</title>", $"<title>{t}: our road tiles</title>")
+                           .Replace("<h1>CARiN disc 5944 (2002)</h1>",
+                                    $"<h1>Our tiles: {t}</h1>\n  <div style=\"max-width:220px;margin-bottom:4px\">Coloured lines are our data. " +
+                                    "The grey background is the OpenStreetMap basemap, which shows every road, also outside the region; " +
+                                    "set its opacity to 0 to see ours alone.</div>");
+            }
+            File.WriteAllText(Path.Combine(outDir, "index.html"), html);
+        }
         return new JsonObject { ["cells"] = cells.Count, ["level1_links"] = per[1].lines.Count, ["level2_links"] = per[2].lines.Count, ["level3_links"] = per[3].lines.Count };
     }
 }

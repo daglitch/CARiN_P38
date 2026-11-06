@@ -190,7 +190,7 @@ public static class Program
         var (res, problems) = Validate.Check(specs, !a.Plain, a.CheckEvery);
         Validate.CheckIndex(rt, res, problems);
         Console.WriteLine($"checked in {sw.Elapsed.TotalSeconds - tc:F1} s");
-        var vstats = Validate.ExportViewer(specs, Path.Combine(d, "viewer"), Path.Combine(Repo(a), "viewer", "index.html"));
+        var vstats = Validate.ExportViewer(specs, Path.Combine(d, "viewer"), Path.Combine(Repo(a), "viewer", "index.html"), r.Label);
         using (var f = File.Create(Path.Combine(d, "roads.bin")))
             foreach (var b in rt.Blocks) f.Write(b);
         var by = new JsonObject();
