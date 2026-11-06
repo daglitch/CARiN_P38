@@ -175,13 +175,14 @@ public static class Program
         var sw = Stopwatch.StartNew();
         var rt = Tiles.Build(m, m.Strings, r.Label);
         Console.WriteLine($"tiles built in {sw.Elapsed.TotalSeconds:F1} s");
-        var specs = Link.Run(rt, 0, !a.Plain);
+        var specs = Link.Run(rt, 0, !a.Plain, withIndex: true);
         var tc = sw.Elapsed.TotalSeconds;
         var (res, problems) = Validate.Check(specs, !a.Plain, a.CheckEvery);
+        Validate.CheckIndex(rt, res, problems);
         Console.WriteLine($"checked in {sw.Elapsed.TotalSeconds - tc:F1} s");
         var vstats = Validate.ExportViewer(specs, Path.Combine(d, "viewer"), Path.Combine(Repo(a), "viewer", "index.html"));
         using (var f = File.Create(Path.Combine(d, "roads.bin")))
-            foreach (var sp in specs) f.Write(sp.Raw);
+            foreach (var b in rt.Blocks) f.Write(b);
         var by = new JsonObject();
         foreach (var g in specs.GroupBy(sp => sp.BType).OrderBy(g => Array.IndexOf(Link.Order, g.Key)))
             by[$"0x{g.Key:X2}"] = new JsonObject

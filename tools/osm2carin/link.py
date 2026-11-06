@@ -135,6 +135,35 @@ def _fill(sp):
         rec[0][8:14] = struct.pack('>IH', nb.block_id, start[6] + 16 * k)
 
 
+def choose_widths(d):
+    """The two CF=1 bit widths (decoded bytes 6/7) that make the encoding smallest: width 0 for
+    link lengths (S4 +0x0C), width 1 for coordinate deltas (S5, S6, S7). Exact bit cost of
+    encode_type00 for each width 0..16; the smallest width wins ties. The disc's own tiles use
+    about 8-12 and 6-9; leaving both at 0 forces a 16-bit escape for every value."""
+    def sec(i):
+        return struct.unpack_from('>HH', d, 8 + 4 * i)
+    o4, n4 = sec(4)
+    lengths = [struct.unpack_from('>H', d, o4 + 30 * k + 0x0C)[0] for k in range(n4)]
+    deltas = []
+    for i, rec in ((5, 8), (6, 16), (7, 6)):
+        off, n = sec(i)
+        for k in range(1, n):
+            for o in (0, 2):
+                v = struct.unpack_from('>H', d, off + rec * k + o)[0]
+                pv = struct.unpack_from('>H', d, off + rec * (k - 1) + o)[0]
+                deltas.append(((v - pv) & 0xFFFF, (pv - v) & 0xFFFF))
+
+    def len_bits(w):
+        return sum(1 + (16 if v >> w else w) for v in lengths)
+
+    def delta_bits(w):
+        return sum(1 + w if not up >> w else 2 + w if not down >> w else 18 for up, down in deltas)
+
+    w0 = min(range(17), key=lambda w: (len_bits(w), w))
+    w1 = min(range(17), key=lambda w: (delta_bits(w), w))
+    return w0, w1
+
+
 def _encode(sp, oc_cf1):
     """-> raw on-disc bytes (header included, not padded)."""
     t = sp.tile
@@ -145,9 +174,12 @@ def _encode(sp, oc_cf1):
     plain = t.build(fmt.UNIT, pad_units=units)
     if sp.btype != 0 or oc_cf1 is None:
         return plain.rstrip(b'\0') or plain[:8], False, plain
-    packed = oc_cf1.encode_type00(plain, fmt.RECORD_SIZE_TABLE, fmt.DB_REL, fmt.SUBREL, fmt.UNIT)
+    wide = bytearray(plain)                    # the widths live only in the CF=1 form
+    wide[6:8] = bytes(choose_widths(plain))
+    wide = bytes(wide)
+    packed = oc_cf1.encode_type00(wide, fmt.RECORD_SIZE_TABLE, fmt.DB_REL, fmt.SUBREL, fmt.UNIT)
     if len(packed) < len(plain.rstrip(b'\0')):
-        return packed, True, plain
+        return packed, True, wide
     return plain.rstrip(b'\0'), False, plain
 
 

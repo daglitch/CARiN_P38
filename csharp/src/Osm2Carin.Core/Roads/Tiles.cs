@@ -78,6 +78,11 @@ public sealed class RoadTiles
     public readonly Dictionary<int, Cell> Roots = new();
     public System.Text.Json.Nodes.JsonObject Stats = new();
     public int EndUnit;
+    /// <summary>Spatial index per road layer (when linked with indexes) and its root square.</summary>
+    public readonly Dictionary<int, Spatial.LayerIndex> Index = new();
+    public (long x, long y, long side) IndexRoot;
+    /// <summary>Every road-layer block in physical order: per layer [0x08 grid][0x09 nodes][tiles].</summary>
+    public List<byte[]> Blocks = new();
 }
 
 /// <summary>Geometry helpers of tiles.py, with the same floating-point steps (numpy sums are
@@ -260,13 +265,34 @@ public static partial class Tiles
     private static partial Regex RouteName();
 
     // ------------------------------------------------------------------ tree
+    /// <summary>The root square of the original disc's quadtree (its 0x07 layer directory): tiles sit at
+    /// multiples of their own size from its corner. It covers North America.</summary>
+    public static readonly (long x, long y, long side) DiscRoot = (1240326144, -171088640, 671088640);
+
+    /// <summary>The smallest square of the disc's quadtree that holds the box; outside that root, a
+    /// square aligned to multiples of its own side on the 40960 grid (tiles.py root_cell).</summary>
     public static Cell RootCell(long xmin, long ymin, long xmax, long ymax)
     {
-        long x0 = Geo.FloorDiv(xmin - Origin.x, Base) * Base + Origin.x;
-        long y0 = Geo.FloorDiv(ymin - Origin.y, Base) * Base + Origin.y;
+        var (x0, y0, side) = DiscRoot;
+        if (x0 <= xmin && y0 <= ymin && xmax <= x0 + side && ymax <= y0 + side)
+        {
+            while (side > Base)
+            {
+                long h = side / 2;
+                long qx = x0 + (xmin >= x0 + h ? h : 0), qy = y0 + (ymin >= y0 + h ? h : 0);
+                if (xmax <= qx + h && ymax <= qy + h && xmin >= qx && ymin >= qy) { x0 = qx; y0 = qy; side = h; }
+                else break;
+            }
+            return new Cell(x0, y0, side, side);
+        }
         long size = Base;
-        while (x0 + size <= xmax || y0 + size <= ymax) size *= 2;
-        return new Cell(x0, y0, size, size);
+        while (true)
+        {
+            long ax = Geo.FloorDiv(xmin - Origin.x, size) * size + Origin.x;
+            long ay = Geo.FloorDiv(ymin - Origin.y, size) * size + Origin.y;
+            if (ax + size >= xmax && ay + size >= ymax) return new Cell(ax, ay, size, size);
+            size *= 2;
+        }
     }
 
     static void GrowStreet(Cell cell, double[] xs, double[] ys, double[] wts, List<Cell> leaves)

@@ -288,6 +288,42 @@ Python would take an estimated 3–4 hours for the tiles.
 
 Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at 0. The encoder then writes every link length and coordinate delta as a 16-bit escape. Choosing the widths per tile, as the disc does, would shrink the street tiles noticeably. Not done yet, so that both implementations stay identical.
 
+### Phase 3 (2026-11-06): smaller tiles, the disc's quadtree, the spatial index
+- **CF=1 widths.** Decoded bytes 6/7 of a street tile are the two adaptive bit widths: one for link lengths, one for coordinate deltas.
+  - The disc's tiles use about 8–12 and 6–9.
+  - We now choose them per tile by the encoder's exact bit cost (`choose_widths`, `Link.ChooseWidths`).
+  - Street tiles shrink about 15%: California's road tiles go from 190.9 to 167.7 MiB.
+  - Python and C# stay byte-identical (Nevada, Monaco).
+- **One quadtree [verified].** 0x07's layer directory gives every layer the same root square: corner (1,240,326,144, −171,088,640), side 671,088,640 = 40,960·2¹⁴, covering North America.
+  - Every tile sits at a multiple of its own size from that corner. The earlier note "bigger tiles are not aligned" measured from 0, not from the root.
+  - Our tiles are now cells of that quadtree (`DISC_ROOT`; outside it, a size-aligned square on the same grid).
+- **Spatial index at DB-REL 26 [verified].** It is as OpenCarin documents for the DVDs (02-geo §7.3), with two differences on this disc:
+  - 0x07 records are 24 B (`T[0x18]`) with two parameters. Parameter 0 is the highest road class a layer keeps: 6 / 1 / 2 / 3 for 0x00 / 0x01 / 0x02 / 0x03. The 12 records plus an 8-byte trailer fill `T[0x19]` = 296 bytes.
+  - 0x08 blocks hold up to 4,092 entries (8 units).
+
+  The disc's layers:
+
+  | Layer | Cell side | Grid |
+  |---|---|---|
+  | 0x00 | 1,310,720 | 512² |
+  | 0x06 | 2,621,440 | 256² |
+  | 0x03 | 5,242,880 | 128² |
+  | 0x02 | 10,485,760 | 64² |
+  | 0x01 | 20,971,520 | 32² |
+  | 0x14 | 167,772,160 | 4² |
+  | 0x15 | 41,943,040 | 16² |
+  | 0x16 | 20,971,520 | 32² |
+  | 0x1C | 41,943,040 | 16² |
+  | 0x1D | 335,544,320 | 2² |
+  | 0x1E | 805,306,368 | 1² (on a root of its own) |
+
+  Record 8 is empty (no 0x1B on this disc). The superblock's S0 record 0 is the BLOCK_ID of 0x07 (unit 2).
+- **Our index** (`Roads/Spatial.cs`):
+  - Given the disc's own 26,023 street tiles, it rebuilds all **9,073 of the disc's 0x09 cell nodes byte for byte**, and the lookup finds every tile.
+  - `osm2carin tiles` writes each road layer as [0x08 grid][0x09 nodes][tiles].
+  - Our coarse tiles have finer edges than the original's, so a coarse layer's cell side is halved until no cell needs more than 64 × 64 items (the disc's maximum).
+  - Checked on every run: the index finds every tile at its centre (Nevada 6,415 / 6,415; California 49,372 / 49,372).
+
 ### POI categories (2026-11-05, OpenCarin issue #24)
 Block 0x07 section 0 is the list of POI category codes on the disc (6 B records: code, name offset, 0; every name is empty, so the unit uses its own names). On CD-ID 5944 it holds **39 codes**, and the 0x06 POI records (20 B, `T[0x32]`, `+0x0A` category) use exactly those 39 (249,000 records).
 

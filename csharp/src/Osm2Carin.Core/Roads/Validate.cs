@@ -129,6 +129,29 @@ public static class Validate
         return (r, p);
     }
 
+    /// <summary>The spatial index finds every tile of its layer at the tile's centre (the unit's own lookup).</summary>
+    public static void CheckIndex(RoadTiles rt, JsonObject res, JsonObject problems)
+    {
+        if (rt.Index.Count == 0) return;
+        var byUnit = new Dictionary<int, byte[]>();
+        foreach (var b in rt.Blocks) byUnit[(int)(BinaryPrimitives.ReadUInt32BigEndian(b) >> 8)] = b;
+        var (x0, y0, side) = rt.IndexRoot;
+        long found = 0, missed = 0;
+        foreach (var (lv, li) in rt.Index)
+        {
+            if (li.GridBlocks.Count == 0 || rt.Levels[lv].Count == 0) continue;
+            foreach (var sp in rt.Levels[lv])
+            {
+                var (a, b, c, d) = sp.Tile.BBox;
+                uint hit = Spatial.Lookup(x0, y0, side, li.GridBlocks[0].blockId, u => byUnit[u], ((long)a + c) / 2, ((long)b + d) / 2);
+                if (hit == sp.BlockId) found++;
+                else { missed++; if (missed <= 10) (problems["index lookup"] ??= new JsonArray()).AsArray().Add($"0x{sp.BlockId:x}"); }
+            }
+        }
+        res["index finds the tile at its centre"] = found;
+        if (missed > 0) res["INDEX LOOKUP BROKEN"] = missed;
+    }
+
     public static bool HasProblems(JsonObject res, JsonObject problems) =>
         problems.Count > 0 || res.Any(kv => kv.Key.Contains("BROKEN") || kv.Key.Contains("OFF THE") || kv.Key.Contains("NO TILE"));
 

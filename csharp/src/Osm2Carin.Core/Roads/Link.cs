@@ -141,17 +141,31 @@ public static class Link
     /// places of the encoding, so after allocation the head is rebuilt from the final tile and the S6
     /// neighbour IDs are patched into the bit stream (Encoder00.Parts). The result equals a fresh
     /// encoding of the final tile (the parity test against the Python tools checks this).</summary>
-    public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6)
+    public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6,
+                                     bool withIndex = false)
     {
         log ??= Console.WriteLine;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Prepare(rt);
         log($"link: prepared in {sw.Elapsed.TotalSeconds:F1} s");
         var specs = Order.SelectMany(lv => rt.Levels[lv]).ToList();
+        if (withIndex)
+        {
+            // one root square for every layer: the disc's own when the region lies inside it
+            var r = rt.Roots[0];
+            var (dx, dy, ds) = Tiles.DiscRoot;
+            rt.IndexRoot = r.X1 >= dx && r.Y1 >= dy && r.X2 <= dx + ds && r.Y2 <= dy + ds ? Tiles.DiscRoot : (r.X1, r.Y1, r.W);
+            foreach (int lv in Order)
+                rt.Index[lv] = Spatial.Build(lv, rt.Levels[lv], rt.IndexRoot.x, rt.IndexRoot.y, rt.IndexRoot.side);
+            log($"link: spatial index laid out ({string.Join(", ", Order.Select(lv => $"0x0{lv}: {rt.Index[lv].GridBlocks.Count} grid + {rt.Index[lv].Nodes.Count} cell blocks"))})");
+        }
+        var layerStart = new Dictionary<int, int>();
+        { int i0 = 0; foreach (int lv in Order) { layerStart[lv] = i0; i0 += rt.Levels[lv].Count; } }
         foreach (var sp in specs) sp.BlockId = 0x00FFFF01;
         foreach (var sp in specs) Fill(sp);
         var units = new int[specs.Count];
         var parts = new Encoder00.Parts?[specs.Count];
+        var widths = new (byte, byte)[specs.Count];
         Parallel.For(0, specs.Count, i =>
         {
             var sp = specs[i];
@@ -159,6 +173,8 @@ public static class Link
             int len = used;
             if (sp.BType == 0 && cf1)
             {
+                widths[i] = ChooseWidths(plain);
+                (plain[6], plain[7]) = widths[i];          // the widths live only in the CF=1 form
                 var p = Encoder00.EncodeParts(plain, Fmt.RecordSizeTable, Fmt.DbRel, Fmt.SubRel, Fmt.Unit);
                 if (p.Head.Length + p.Bits.Length < used) { parts[i] = p; len = p.Head.Length + p.Bits.Length; }
             }
@@ -170,6 +186,9 @@ public static class Link
             int pos = baseUnit;
             for (int i = 0; i < specs.Count; i++)
             {
+                if (withIndex)
+                    foreach (int lv in Order)
+                        if (layerStart[lv] == i && rt.Levels[lv].Count > 0) pos = Spatial.Allocate(rt.Index[lv], pos);
                 if (units[i] > 255) throw new InvalidOperationException("tile larger than 255 units");
                 specs[i].BlockId = (uint)((pos << 8) | units[i]);
                 pos += units[i];
@@ -183,6 +202,7 @@ public static class Link
                 byte[] raw;
                 if (parts[i] is Encoder00.Parts p)
                 {
+                    (plain[6], plain[7]) = widths[i];
                     var head = Encoder00.Head(plain, Fmt.RecordSizeTable, Fmt.Unit);
                     raw = [.. head, .. Encoder00.PatchIds(p, plain, Fmt.RecordSizeTable)];
                     if (head.Length != p.Head.Length)            // cannot happen: re-encode to be safe
@@ -198,9 +218,52 @@ public static class Link
                 sp.Raw = o;
             });
             log($"link round {rnd + 1}: {specs.Count:N0} tiles, {pos - baseUnit:N0} units, {grown} grew  [{sw.Elapsed.TotalSeconds:F1} s]");
-            if (grown == 0) { rt.EndUnit = pos; return specs; }
+            if (grown == 0)
+            {
+                rt.EndUnit = pos;
+                rt.Blocks = new List<byte[]>();
+                foreach (int lv in Order)
+                {
+                    if (withIndex && rt.Levels[lv].Count > 0) rt.Blocks.AddRange(Spatial.Write(rt.Index[lv]));
+                    rt.Blocks.AddRange(rt.Levels[lv].Select(sp => sp.Raw));
+                }
+                return specs;
+            }
         }
         throw new InvalidOperationException("block allocation did not settle");
+    }
+
+    /// <summary>The two CF=1 bit widths (decoded bytes 6/7) that make the encoding smallest (link.py
+    /// choose_widths): exact encoder bit cost for widths 0..16, smallest width on ties.</summary>
+    public static (byte w0, byte w1) ChooseWidths(byte[] d)
+    {
+        (int off, int n) Sec(int i) => (BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(8 + 4 * i)), BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(10 + 4 * i)));
+        var (o4, n4) = Sec(4);
+        var lengths = new int[n4];
+        for (int k = 0; k < n4; k++) lengths[k] = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(o4 + 30 * k + 0x0C));
+        var deltas = new List<(int up, int down)>();
+        foreach (var (i, rec) in ((int, int)[])[(5, 8), (6, 16), (7, 6)])
+        {
+            var (off, n) = Sec(i);
+            for (int k = 1; k < n; k++)
+                foreach (int o in (int[])[0, 2])
+                {
+                    int v = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(off + rec * k + o));
+                    int pv = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(off + rec * (k - 1) + o));
+                    deltas.Add(((v - pv) & 0xFFFF, (pv - v) & 0xFFFF));
+                }
+        }
+        int best0 = 0, best1 = 0;
+        long c0 = long.MaxValue, c1 = long.MaxValue;
+        for (int w = 0; w <= 16; w++)
+        {
+            long lb = 0, db = 0;
+            foreach (int v in lengths) lb += 1 + ((v >> w) != 0 ? 16 : w);
+            foreach (var (up, down) in deltas) db += (up >> w) == 0 ? 1 + w : (down >> w) == 0 ? 2 + w : 18;
+            if (lb < c0) { c0 = lb; best0 = w; }
+            if (db < c1) { c1 = db; best1 = w; }
+        }
+        return ((byte)best0, (byte)best1);
     }
 
     static byte[] PlainOf(TileSpec sp, out int used)
