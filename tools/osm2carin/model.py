@@ -272,6 +272,7 @@ def build(pbf, profile='default', log=print):
                  **{'link_' + k: v for k, v in links.items()},
                  **{'tr_' + k: v for k, v in tr.items()},
                  **_poi_arrays(pois))
+    model['poi_code'] = np.array([poi.CODE_OF[S.items[p['cat']]] for p in pois], np.uint8)
     stats.update(_stats(links, pois, S, len(gid), len(SX), n_ways, len(restrictions), tr))
     stats['seconds'] = round(time.time() - t0, 1)
     return model, S.items, stats

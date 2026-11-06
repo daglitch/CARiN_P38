@@ -6,12 +6,13 @@ Run from the tools/ folder (or with tools/ on PYTHONPATH):
   py -m osm2carin estimate --region us/nevada     size estimate before downloading
   py -m osm2carin download --region us/nevada     fetch the .osm.pbf (cached, MD5-checked)
   py -m osm2carin model    --region us/nevada     road graph + POIs, report, model-based estimate
+  py -m osm2carin tiles    --region us/nevada     road levels 0-3 as CARiN tiles, checked, + viewer data
   py -m osm2carin build    --region us/california --out out/ [--force] [--levels 0-3]
                            [--estimate-only] [--profile default|full|compact] [--no-poi]
 
-Phase status: 1 (download, road model, estimate) is implemented; 2-4
-(tiling into levels 0-3, the other DB structures, packing and burning) are not yet,
-so `build` stops after the model with a report.
+Phase status: 1 (download, road model, estimate) and 2 (road tiles for levels 0-3)
+are implemented; 3-4 (the other DB structures, packing and burning) are not yet,
+so `build` stops after the road tiles with a report.
 """
 import argparse
 import json
@@ -95,6 +96,61 @@ def cmd_model(args):
     run_model(args, _region(args))
 
 
+def opencarin(args):
+    """OpenCarin's CF=1 codec (third_party/OpenCarin, cloned by run-viewer.bat), or None."""
+    oc = args.opencarin or os.path.join(REPO, 'third_party', 'OpenCarin')
+    if not os.path.isdir(os.path.join(oc, 'carin')):
+        print(f'OpenCarin not found in {oc}: street tiles are stored plain (larger)')
+        return None
+    sys.path.insert(0, oc)
+    sys.modules.pop('carin', None)
+    from carin.parser import cf1
+    return cf1
+
+
+def run_tiles(args, region, stats=None):
+    import time
+    from . import link, model, report, tiles, validate
+    d = os.path.join(args.out, slug(region['id']))
+    if not os.path.exists(os.path.join(d, 'model.npz')):
+        stats, _ = run_model(args, region)
+    m, strings, mstats = model.load(os.path.join(d, 'model'))
+    t0 = time.time()
+    rt = tiles.build(m, strings, regions.label(region))
+    cf1 = opencarin(args)
+    specs = link.link(rt, 0, cf1)
+    res, problems = validate.check(specs, cf1)
+    vstats = validate.export_viewer(specs, os.path.join(d, 'viewer'),
+                                    os.path.join(REPO, 'viewer', 'index.html'))
+    # the tiles, back to back as they will sit in carindb (provisional base unit 0)
+    with open(os.path.join(d, 'roads.bin'), 'wb') as f:
+        for sp in specs:
+            f.write(sp.raw)
+    by = {}
+    for sp in specs:
+        k = f'0x{sp.btype:02X}'
+        b = by.setdefault(k, dict(blocks=0, units=0, cf1=0, decoded_bytes=0))
+        b['blocks'] += 1
+        b['units'] += len(sp.raw) // 2048
+        b['cf1'] += int(bool(sp.cf1))
+        b['decoded_bytes'] += len(sp.decoded)
+    mstats['tiles'] = dict(rt.stats, blocks=by, units=rt.end_unit, seconds=round(time.time() - t0, 1),
+                           checks=res, problems=problems, viewer=vstats)
+    rp = report.write(mstats, d)
+    bad = {k: v for k, v in res.items() if k.isupper() or 'BROKEN' in k or 'OFF' in k or 'NO TILE' in k}
+    print(f'road tiles: {len(specs):,} blocks, {rt.end_unit:,} units ({rt.end_unit * 2048 / 2**20:,.1f} MiB)')
+    for k, v in by.items():
+        print(f'  {k}: {v["blocks"]:,} blocks, {v["units"]:,} units, {v["cf1"]:,} CF=1')
+    print('checks: ' + ('all passed' if not bad and not problems else f'PROBLEMS {bad} {problems}'))
+    print(f'viewer: {os.path.join(d, "viewer")}  (py -m http.server -d <that folder>)')
+    print(f'report: {rp}')
+    return specs
+
+
+def cmd_tiles(args):
+    run_tiles(args, _region(args))
+
+
 def cmd_build(args):
     region = _region(args)
     pre = pre_estimate(args, region)
@@ -117,13 +173,14 @@ def main(argv=None):
     ap.add_argument('--out', default=DEFAULT_OUT, help='output folder (default: <repo>/out)')
     sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('regions'); p.add_argument('text', nargs='?'); p.add_argument('--refresh', action='store_true')
-    for name in ('estimate', 'download', 'model', 'build'):
+    for name in ('estimate', 'download', 'model', 'tiles', 'build'):
         p = sp.add_parser(name)
         p.add_argument('--region', required=True)
         p.add_argument('--out', default=argparse.SUPPRESS)
         p.add_argument('--profile', default='default', choices=['default', 'full', 'compact'])
         p.add_argument('--no-poi', action='store_true')
         p.add_argument('--refresh', action='store_true', help='re-download even if cached')
+        p.add_argument('--opencarin', help='OpenCarin checkout (default: <repo>/third_party/OpenCarin)')
         if name == 'build':
             p.add_argument('--force', action='store_true')
             p.add_argument('--levels', default='0-3')
@@ -131,7 +188,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     args.out = os.path.abspath(args.out)
     return {'regions': cmd_regions, 'estimate': cmd_estimate, 'download': cmd_download,
-            'model': cmd_model, 'build': cmd_build}[args.cmd](args)
+            'model': cmd_model, 'tiles': cmd_tiles, 'build': cmd_build}[args.cmd](args)
 
 
 if __name__ == '__main__':

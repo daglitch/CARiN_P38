@@ -106,6 +106,13 @@ The output disc must carry POIs: shown on the map and searchable as destinations
   - **0x11** POI search tries;
   - POI references from the city table (0x0C), which lists brands per city.
   - Decode each with a round trip against the original first, as for the road parcels.
+- **Known recipe:** OpenCarin `docs/carindb/01-architecture.md` §4.4.2 (issue #24). A from-scratch POI index was listed, searched and routed to on a CNI1.
+  - City category ranges (0x0C S3) and brand ranges (S5).
+  - 0x11 first-letter leaves.
+  - Two 0x10 copies of branded POIs (category copy, brand copy).
+  - 0x06 map records pointing at the copy the disc uses.
+  - Rules: names sorted inside each letter leaf; every first letter gets a leaf; leaves in letter order; road levels linked near the car.
+- **Category codes:** 0x07 S0 lists the codes present. This disc uses 39 of them (`carin-disc-findings.md` "POI categories"); `tools/osm2carin/poi.py` maps OSM tags to them.
 - **Snapping:** attach each POI to its nearest level-0 link (routing to a POI needs a link and side).
 - **Size:** count POIs in the size estimate (Phase 1) and in the build report (POIs in / out per category, dropped and why). Add an `--no-poi` / `--poi-categories` option so a large region can still fit on a CD-R.
 - **Validation:** decode our POI blocks back and show them in `viewer/` as a layer.

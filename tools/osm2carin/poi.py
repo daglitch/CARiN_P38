@@ -1,10 +1,30 @@
-"""Navigation POI categories: OSM key=value -> category.
+"""Navigation POI categories: OSM key=value -> category -> CARiN category code.
 
-Only these become POIs on the disc; everything else (benches, bins, artwork…)
-is counted as dropped. The category names follow a classic in-car POI menu.
-The mapping to the original disc's 0x06/0x10 category codes is Phase 2b
-(they are not decoded yet).
+Only these become POIs on the disc; everything else (benches, bins, artwork...)
+is counted as dropped.
+
+CARiN category codes are the u16 at 0x06 record +0x0A and in the 0x0C section 3 city
+ranges; block 0x07 section 0 lists the codes present on a disc, names empty (the unit
+has its own names). OpenCarin issue #24 / docs/carindb/01-architecture.md 4.2, 4.4.2.
+On CD-ID 5944 the list is exactly the 39 codes its 249,000 0x06 records use. Names:
+issue #24 (read on a CNI1) where marked *, else from the POIs filed under the code on
+CD-ID 5944 (carin-disc-findings.md "POI categories").
 """
+
+# CARiN code -> name (CD-ID 5944 has all of these, and only these)
+CODES = {
+    11: 'auto services and dealers', 12: 'petrol stations*', 13: 'car rental*', 14: 'parking*',
+    15: 'park and ride', 16: 'rest areas, service plazas*', 17: 'automobile clubs',
+    20: 'tourist attractions', 21: 'hotels*', 22: 'restaurants*', 23: 'banks',
+    24: 'community and civic centres', 25: 'libraries', 26: 'courts', 30: 'cash machines / banks',
+    31: 'tourist information*', 32: 'museums*', 35: 'sports centres, stadiums*', 37: 'landmarks*',
+    38: 'amusement and entertainment', 39: 'parks*', 40: 'convention and business facilities',
+    41: 'hospitals*', 42: 'police', 43: 'city halls', 47: 'shopping*', 48: 'towns (city centres)*',
+    50: 'golf*', 51: 'railway stations*', 52: 'airports*', 53: 'ferry terminals*',
+    54: 'bus and coach stations*', 55: 'marinas', 56: 'schools, colleges and universities*',
+    57: 'theatres, casinos and leisure*', 58: 'border crossings', 59: 'bmw dealers',
+    60: 'auto services and dealers (second list, same POIs as 11)', 61: 'business and commercial',
+}
 
 CATEGORIES = {
     # motoring
@@ -46,6 +66,20 @@ CATEGORIES = {
     'shop=supermarket': 'supermarket', 'shop=mall': 'shopping centre',
     'shop=department_store': 'shopping centre', 'shop=convenience': 'convenience store',
     'shop=hardware': 'diy store', 'shop=doityourself': 'diy store',
+}
+
+# our category -> CARiN code
+CODE_OF = {
+    'petrol station': 12, 'ev charging': 12, 'parking': 14, 'car dealer': 11, 'car repair': 11,
+    'car rental': 13, 'car wash': 11, 'rest area': 16, 'airport': 52, 'railway station': 51,
+    'bus station': 54, 'ferry terminal': 53, 'hotel': 21, 'campsite': 21, 'restaurant': 22, 'cafe': 22,
+    'bar': 22, 'hospital': 41, 'doctor': 41, 'pharmacy': 47, 'police': 42, 'fire station': 24,
+    'post office': 24, 'bank': 23, 'atm': 30, 'city hall': 43, 'court': 26, 'government': 43,
+    'embassy': 61, 'library': 25, 'university': 56, 'school': 56, 'cinema': 57, 'theatre': 57,
+    'casino': 57, 'nightlife': 57, 'museum': 32, 'sight': 37, 'zoo': 20, 'amusement park': 38,
+    'tourist information': 31, 'golf': 50, 'stadium': 35, 'sports centre': 35, 'marina': 55,
+    'park': 39, 'place of worship': 37, 'community centre': 24, 'exhibition centre': 40,
+    'supermarket': 47, 'shopping centre': 47, 'convenience store': 47, 'diy store': 47,
 }
 
 # Categories kept even without a name (the unit lists them by category / brand).
