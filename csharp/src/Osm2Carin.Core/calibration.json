@@ -1,0 +1,36 @@
+{
+ "_doc": "Ratios for osm2carin.estimate; see estimate.py and carin-disc-findings.md \"Phase 1\". Source: original disc CD-ID 5944 (disc-survey) and our OSM model of us/nevada.",
+ "street_parcel": {
+  "bytes_per_link": 21.5,
+  "bytes_per_shape_point": 3.14,
+  "bytes_per_parcel": 1348,
+  "links_per_parcel": 125,
+  "_fit": "least squares over 1,212 CF=1 type 0x00 parcels (every 20th), extent bytes incl. padding, rel. err 13%"
+ },
+ "bytes_per_link": 92.6,
+ "bytes_per_shape_point": 3.14,
+ "_bytes_per_link": "street parcel (21.5 + 1348/125) + per-link share of blocks 0x01,0x02,0x03,0x04,0x08,0x09,0x0E,0x0F (60.3 B)",
+ "bytes_per_poi": 246.4,
+ "_bytes_per_poi": "blocks 0x06+0x10+0x11 / 160,240 distinct phone numbers in 0x10 (lower bound of the POI count)",
+ "fixed_bytes": 36632576,
+ "_fixed_bytes": "all other blocks (superblock, country/city tables, letter index, background layers, TMC), kept as on the original",
+ "reference_region": {
+  "id": "us/nevada",
+  "pbf_bytes": 124111481,
+  "pbf_md5": null,
+  "links": 448806,
+  "shape_points": 2594320,
+  "pois": 27357
+ },
+ "links_per_pbf_byte": {
+  "default": 0.0036161521592027413,
+  "compact": 0.0023027684280070753,
+  "full": 0.006560126375415663
+ },
+ "shape_points_per_pbf_byte": {
+  "default": 0.020903142715700894,
+  "compact": 0.008611209788077542,
+  "full": 0.03899585244655972
+ },
+ "pois_per_pbf_byte": 0.00022042279875783612
+}

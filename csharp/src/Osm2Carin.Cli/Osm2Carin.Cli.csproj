@@ -6,6 +6,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <AssemblyName>osm2carin</AssemblyName>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

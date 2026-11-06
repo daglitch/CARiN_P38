@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- size-estimate ratios, shared with tools/osm2carin/calibration.json -->
+    <None Include="calibration.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
