@@ -10,18 +10,22 @@ Rebuild them with:
 
 ```
 osm2carin cd-split P38_Navigation_CD_2002_California_Nevada.bin out\phase0\orig
+osm2carin disc --region us/california,us/nevada,us:highways --coarse-budget 20
 osm2carin disc --region us/california,us/nevada
 osm2carin disc --region us/california
 osm2carin disc --region us/nevada
 ```
 
+The first needs the US-wide extract (11.7 GB download, about 10 minutes to build).
+
 | Image | Size | Sectors (incl. audio) | Fits |
 |---|---|---|---|
+| `us_california+us_nevada+us-highways\disc\us_california+us_nevada+us-highways-3a.cue/.bin` | 748 MiB | 333,480 (74.1 min) | **80-min (700 MB) CD-R only** |
 | `us_california+us_nevada\disc\us_california+us_nevada-3a.cue/.bin` | 645 MiB | 287,658 (63.9 min) | 74- and 80-min CD-R |
 | `us_california\disc\us_california-3a.cue/.bin` | 619 MiB | 276,040 (61.3 min) | 74- and 80-min CD-R |
 | `us_nevada\disc\us_nevada-3a.cue/.bin` | 447 MiB | 199,638 (44.4 min) | 74- and 80-min CD-R |
 
-Burn **California + Nevada**: it covers both states, like the original disc. The single-state images are there in case you want a smaller disc.
+Burn **California + Nevada + US highways** on an 80-minute (700 MB) CD-R. Like the original disc, it has every road in the two states and the highway network across the rest of the US. If that disc won't read, try **California + Nevada**: it is smaller and stays further from the disc's outer edge. The single-state images are there in case you want a smaller disc still.
 
 ## What is on the disc
 
@@ -34,7 +38,11 @@ It is the original disc with the **road map replaced by OpenStreetMap** (Califor
   - traffic (TMC) data.
 
   The original roads are also still on the disc, but nothing on the map leads to them any more. Only the old address and POI search still points at them.
-- **Elsewhere in the US:** no roads at all, because our data covers only California and Nevada.
+- **Elsewhere in the US:**
+  - on the highways disc, motorways and trunk roads only (interstates, freeways, US highways and their ramps), at every zoom level;
+  - on the other discs, no roads at all.
+
+  The original also has the primary state roads and some metro areas in full; ours doesn't yet, for space.
 
 What to expect:
 - **Picking a destination on the map** works on our roads. This is the main test.
@@ -63,6 +71,7 @@ Label the disc "3a CA+NV".
    - Does the route calculate, and how long does it take?
    - Does it follow sensible roads? Is the guidance (arrows, voice, distances) right at the first few turns?
    - Try one longer route (50+ km, along a freeway) to exercise the coarse levels.
+   - On the highways disc, also scroll the map to another state (e.g. Arizona or Oregon), pick a point on an interstate there, and check that a route calculates. Those roads join ours at the state line.
 5. **Destination menus (just observe).** Enter a city and a street, or pick a POI. Then note:
    - what is listed;
    - what happens when you start guidance: a route, "no route", an error, a freeze?

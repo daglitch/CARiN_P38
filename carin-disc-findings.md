@@ -356,7 +356,22 @@ Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at
   **California and Nevada on one disc**, like the original (`--region us/california,us/nevada`): 100,517 units of roads, 154,194 blocks, 287,658 sectors (63.9 min, 645 MiB). Every check passed, with 55,643 / 55,643 tiles found from 0x07.
   - The two Geofabrik extracts overlap at the state line. Each OSM way, relation and node is taken once: 874 border ways and 156 POIs were in both extracts.
 
-  All three images fit a 74-minute CD-R. EDC/ECC is correct on every sector. The block chain covers the whole file.
+  **Plus the US highway network**, as the original disc has major roads US-wide (`--region us/california,us/nevada,us:highways --coarse-budget 20`):
+  - **What it adds:** from Geofabrik's US extract (11.7 GB), only the motorways, trunk roads and their links, and only inside the disc's quadtree root. Ways already in the state extracts are kept from those.
+  - **Size:** 146,339 units of roads, 75,900 tiles, 333,480 sectors (74.1 min, 748 MiB). That needs an **80-minute CD-R**.
+  - **Why not primary roads:** all US motorway/trunk/primary roads alone came to 143,790 units at the default coarse budget, 101,123 at a 20 KiB budget. That is too much on top of California and Nevada (about 370,000 sectors). By links, primary roads are 48% of those three classes.
+  - **Coarse tiles:** they were split at a 5 KiB point budget (about 128 points), so the coarse levels of thin highway networks were nearly empty one-unit tiles. The original's coarse tiles are mostly full-size (2,621,440: 2,985 of 3,151 at 0x01).
+    - `--coarse-budget 20` halves our coarse levels (US major roads: 70,437 → 36,837 units).
+    - The default stays 5 for parity with the Python reference.
+  - **Original for comparison:** its whole 0x03 level, California and Nevada detail included, is only 11,641 units. Its US coverage is thinner than OSM's.
+  - **Checks [verified offline]:**
+    - every disc check passes, with 75,900 / 75,900 tiles found from 0x07;
+    - OpenCarin decodes and finds all 75,900;
+    - interstates in Phoenix, Denver, Chicago, Miami, Seattle, Honolulu and Anchorage resolve to our tiles on all four levels;
+    - the viewer, with the basemap off, draws the whole US highway network from our data.
+  - **POIs:** only those of the fully selected states. A `:highways` extract reads none.
+
+  The other three images fit a 74-minute CD-R. EDC/ECC is correct on every sector. The block chain covers the whole file.
 - **Read back by OpenCarin** (`tools/phase3a_check.py`, with its spatial lookup set to the DB-REL 26 directory layout):
   - it detects 2048-byte units, DB-REL 26 and sub-revision 8;
   - it walks the chain and decodes every one of our tiles;

@@ -100,12 +100,33 @@ public static class ModelBuilder
 
     public static RoadModel Build(string pbf, string profile = "default", Action<string>? log = null) => Build([pbf], profile, log);
 
+    public static RoadModel Build(IReadOnlyList<string> pbfs, string profile = "default", Action<string>? log = null) =>
+        Build(pbfs.Select(p => new Extract(p)).ToList(), profile, log);
+
+    /// <summary>An extract to read. Only != null: just these highway=* values, no POIs, and only nodes
+    /// inside the disc's quadtree root (Tiles.DiscRoot). Used for the rest of the country around fully
+    /// detailed regions, as the original disc has the US highway network.</summary>
+    public sealed record Extract(string Path, IReadOnlySet<string>? Only = null)
+    {
+        public bool MajorOnly => Only != null;
+    }
+
+    /// <summary>Road selections for a partial region: "highways" = motorways and trunk roads
+    /// (interstates, freeways, US highways), "major" adds primary roads.</summary>
+    public static readonly Dictionary<string, HashSet<string>> Selections = new()
+    {
+        ["highways"] = ["motorway", "motorway_link", "trunk", "trunk_link"],
+        ["major"] = ["motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"],
+    };
+
     /// <summary>One road model from several extracts (e.g. two neighbouring states). Geofabrik extracts
     /// overlap at their borders: a way crossing it is in both, with all its nodes, so ways, relations
     /// and nodes are taken once per OSM ID (first file wins). With one file nothing is dropped.</summary>
-    public static RoadModel Build(IReadOnlyList<string> pbfs, string profile = "default", Action<string>? log = null)
+    public static RoadModel Build(IReadOnlyList<Extract> extracts, string profile = "default", Action<string>? log = null)
     {
+        var pbfs = extracts.Select(e => e.Path).ToList();
         bool multi = pbfs.Count > 1;
+        var (rx0, ry0, rside) = Roads.Tiles.DiscRoot;
         var seenWays = new HashSet<long>(); var seenRels = new HashSet<long>(); var seenPoiNodes = new HashSet<long>();
         log ??= Console.WriteLine;
         var sw = Stopwatch.StartNew();
@@ -126,11 +147,12 @@ public static class ModelBuilder
         var restrictions = new List<(long rid, long fr, long via, long to, string kind)>();
         int nHw = 0;
         var keys = new HashSet<string>(Poi.Keys) { "highway", "type" };
-        foreach (var pbf in pbfs)
-        foreach (var blk in Pbf.Read(pbf, new PbfFilter { Ways = true, Relations = true, Keys = keys }))
+        foreach (var ex in extracts)
+        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Ways = true, Relations = true, Keys = keys }))
         {
             foreach (var o in blk.Items)
             {
+                if (ex.Only != null && o is OsmWay mw && !ex.Only.Contains(mw.Tags.Get("highway") ?? "")) continue;
                 if (multi && !(o is OsmRelation r0 ? seenRels.Add(r0.Id) : seenWays.Add(((OsmWay)o).Id))) continue;
                 if (o is OsmRelation rel)
                 {
@@ -202,17 +224,19 @@ public static class ModelBuilder
         Array.Sort(need);
         var nids = new List<long>(); var nxs = new List<int>(); var nys = new List<int>();
         var pois = new List<PoiRec>();
-        foreach (var pbf in pbfs)
-        foreach (var blk in Pbf.Read(pbf, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = new HashSet<string>(Poi.Keys) }))
+        foreach (var ex in extracts)
+        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = ex.MajorOnly ? null : new HashSet<string>(Poi.Keys) }))
         {
             foreach (var n in blk.Nodes)
             {
                 if (n.Valid && Array.BinarySearch(need, n.Id) >= 0)
                 {
                     var (x, y) = Geo.FromLonLat(n.Lon, n.Lat);
+                    // outside the disc's root square: left out, so its ways count as having missing nodes
+                    if (ex.MajorOnly && !(x >= rx0 && x < rx0 + rside && y >= ry0 && y < ry0 + rside)) continue;
                     nids.Add(n.Id); nxs.Add(x); nys.Add(y);
                 }
-                if (n.Tags == null) continue;
+                if (n.Tags == null || ex.MajorOnly) continue;
                 if (multi && !seenPoiNodes.Add(n.Id)) continue;
                 var pt = Poi.PoiTags(n.Tags);
                 if (pt != null && pt.Value.cat == null) drop.Add(PoiDropReason(pt.Value.value));

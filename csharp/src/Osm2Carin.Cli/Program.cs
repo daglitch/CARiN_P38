@@ -19,7 +19,9 @@ public static class Program
           osm2carin model    --region us/nevada          road graph + POIs, report, model-based estimate
           osm2carin tiles    --region us/nevada          road levels 0-3 as CARiN tiles, checked, + viewer data
           osm2carin build    --region us/california [--force] [--estimate-only]
-                             --region us/california,us/nevada builds several regions as one map
+                             --region us/california,us/nevada builds several regions as one map;
+                             region:highways adds only its motorways and trunk roads, region:major also
+                             its primary roads (us/california,us/nevada,us:highways)
           osm2carin disc     --region us/california [--orig <dir>]
                                                        Phase 3a: our road layers grafted onto the original
                                                        disc -> out/<region>/disc/<region>-3a.bin/.cue
@@ -75,6 +77,7 @@ public static class Program
                 case "--force": a.Force = true; break;
                 case "--estimate-only": a.EstimateOnly = true; break;
                 case "--plain": a.Plain = true; break;
+                case "--coarse-budget": Tiles.CoarseBudget = double.Parse(Next()) * 1024; break;
                 default:
                     if (s.StartsWith("--")) throw new ArgumentException($"unknown option {s}");
                     if (a.Cmd == "") a.Cmd = s; else a.Pos.Add(s);
@@ -157,7 +160,7 @@ public static class Program
     static (RoadModel m, JsonObject cap) RunModel(Args a, Regions.Region r)
     {
         var got = r.Extracts.Select(x => Regions.Fetch(x, Cache(a), a.Refresh)).ToList();
-        var m = ModelBuilder.Build(got.Select(g => g.path).ToList(), a.Profile);
+        var m = ModelBuilder.Build(got.Select((g, i) => new ModelBuilder.Extract(g.path, r.Extracts[i].Only is string o ? ModelBuilder.Selections[o] : null)).ToList(), a.Profile);
         m.Stats["region"] = r.Id;
         m.Stats["pbf_md5"] = string.Join(",", got.Select(g => g.md5));
         var d = Path.Combine(a.Out, Slug(r.Id));

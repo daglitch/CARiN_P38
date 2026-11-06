@@ -246,7 +246,10 @@ public static partial class Tiles
     public const long StreetMax = 1310720, CoarseMax = 2621440, StreetMinW = 81920;
     public static readonly Dictionary<int, int> LevelMaxClass = new() { [3] = 3, [2] = 2, [1] = 1 };
     public static readonly Dictionary<int, double> SimplifyM = new() { [3] = 20.0, [2] = 60.0, [1] = 150.0 };
-    public const double StreetBudget = 9 * 1024, CoarseBudget = 5 * 1024;
+    public const double StreetBudget = 9 * 1024;
+    /// <summary>Point weight (40 per chain point) above which a coarse tile is split. 5 KiB matches the
+    /// Python reference; more gives fewer, fuller coarse tiles (the original disc's are mostly full-size).</summary>
+    public static double CoarseBudget = 5 * 1024;
     public const int S8Max = 256;
     public const int TileLimit = 8 * 2048 - 256;
     public const double StreetSimplifyM = 2.0;
