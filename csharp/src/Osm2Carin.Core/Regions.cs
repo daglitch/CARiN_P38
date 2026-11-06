@@ -19,7 +19,7 @@ public static class Regions
         return c;
     }
 
-    public sealed record Region(string Id, string Name, string PbfUrl, string[] Codes, Region[]? Parts = null)
+    public sealed record Region(string Id, string Name, string PbfUrl, string[] Codes, Region[]? Parts = null, string? Only = null)
     {
         /// <summary>The extracts this region is built from: itself, or the regions it combines.</summary>
         public Region[] Extracts => Parts ?? [this];
@@ -58,10 +58,24 @@ public static class Regions
     /// Name "California and Nevada"); a single query resolves as before.</summary>
     public static Region ResolveAll(Dictionary<string, Region> index, string query)
     {
+        // "us:highways" / "us:major": only those roads of that region (ModelBuilder.Selections)
         var parts = query.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(q => Resolve(index, q)).DistinctBy(r => r.Id).ToArray();
-        if (parts.Length == 1) return parts[0];
-        return new Region(string.Join('+', parts.Select(r => r.Id)), string.Join(" and ", parts.Select(r => r.Label)), "",
+            .Select(q =>
+            {
+                int c = q.IndexOf(':');
+                if (c < 0) return Resolve(index, q);
+                string sel = q[(c + 1)..].ToLowerInvariant();
+                if (!Osm.ModelBuilder.Selections.ContainsKey(sel))
+                    throw new KeyNotFoundException($"unknown road selection :{sel} (use {string.Join(", ", Osm.ModelBuilder.Selections.Keys.Select(k => ":" + k))})");
+                return Resolve(index, q[..c]) with { Only = sel };
+            })
+            .DistinctBy(r => r.Id).ToArray();
+        if (parts.Length == 1 && parts[0].Only == null) return parts[0];
+        var full = parts.Where(r => r.Only == null).Select(r => r.Label).ToList();
+        var partial = parts.Where(r => r.Only != null).ToList();
+        string name = string.Join(" and ", full.Count > 0 ? full : parts.Select(r => r.Label))
+                      + (full.Count > 0 && partial.Count > 0 ? " with " + string.Join(" and ", partial.Select(r => $"{r.Label} {r.Only}")) : "");
+        return new Region(string.Join('+', parts.Select(r => r.Only != null ? $"{r.Id}-{r.Only}" : r.Id)), name, "",
                           parts.SelectMany(r => r.Codes).Distinct().ToArray(), parts);
     }
 

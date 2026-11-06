@@ -81,6 +81,20 @@ Each step ends in a disc that can be built and checked offline. The first one is
 - **Each one is round-tripped against the original first,** as the road tiles were (parse → build byte-identical).
 - **Car test:** enter city → street → destination, then route.
 
+## Space for POIs (2026-11-06)
+
+- **Space now:** the CA + NV + US-highways 3a disc is 333,480 sectors. An 80-minute CD-R holds 360,000, so about 26,500 units are free.
+- **What the POIs need:**
+  - the original's POI data (0x06 + 0x10 + 0x11) is about 19,300 units for 249,000 POIs;
+  - OSM has 326,420 POIs in California and Nevada, so about 25,000 units at the same density. That only just fits next to the 3a layout.
+- **Plan: reclaim the old data.** Once 3b and 3c replace the cities, street directory and POI index, nothing points at the old roads. Then:
+  - drop the old road span (units 49,196–168,866, 119,670 units), the old street directory 0x0E (25,489 units) and the old POI data;
+  - pack our blocks into the space;
+  - rewrite the kept background blocks' BLOCK_IDs (the Phase 4 pack).
+
+  That frees about 140,000 units.
+- **US-wide POIs don't fit.** OSM has about 2.7 million, roughly 200,000 units. POIs cover the fully detailed regions only, as on the original.
+
 ## 3c. POIs
 
 Following OpenCarin `01-architecture.md` §4.4.2, which was tested from scratch on a CNI1:

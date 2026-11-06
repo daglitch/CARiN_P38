@@ -21,7 +21,8 @@ Or `dotnet run -c Release --project csharp/src/Osm2Carin.Cli -- <command>`. The 
 | `cd-split <bin> <dir>`, `cd-build <iso> <bin> [--audio a.raw]`, `cd-verify <bin>` | raw MODE2/2352 image tools |
 
 Options:
-- `--region R`: a Geofabrik region, or several separated by commas (`us/california,us/nevada`), built as one map. Their extracts overlap at the borders; each OSM way, relation and node is taken once.
+- `--region R`: a Geofabrik region, or several separated by commas (`us/california,us/nevada`), built as one map. Their extracts overlap at the borders; each OSM way, relation and node is taken once. A `:highways` suffix takes only that region's motorways and trunk roads (`:major` adds primary roads), e.g. `us/california,us/nevada,us:highways` for full detail in two states and the US highway network around them.
+- `--coarse-budget K`: split coarse tiles (levels 0x01-0x03) above K KiB of point weight; the default, 5, matches the Python reference. 20 gives fewer, fuller tiles, about half the size for thin highway networks.
 - `--out <dir>`: the default is `<repo>/out`.
 - `--profile default|full|compact`.
 - `--no-poi`.

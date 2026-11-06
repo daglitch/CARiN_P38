@@ -21,7 +21,9 @@ from collections import Counter
 
 ROAD_RECORDS = {0: 0x00, 2: 0x01, 3: 0x02, 4: 0x03}
 PLACES = {'San Jose': (-121.886, 37.338), 'Los Angeles': (-118.243, 34.052), 'San Francisco': (-122.419, 37.775),
-          'Las Vegas': (-115.140, 36.170), 'Reno': (-119.813, 39.529)}
+          'Las Vegas': (-115.140, 36.170), 'Reno': (-119.813, 39.529),
+          # on an interstate outside CA/NV (highways discs only)
+          'Phoenix I-10': (-112.0467, 33.4625), 'Denver I-25': (-105.0058, 39.7392), 'Chicago I-90/94': (-87.6406, 41.8789)}
 
 
 def main():
