@@ -135,7 +135,18 @@ public static class Spatial
 
     /// <summary>Give the layer's 0x08 and 0x09 blocks IDs from `pos` on (0x08 run, then the 0x09
     /// nodes). Returns the next free unit.</summary>
-    public static int Allocate(LayerIndex li, int pos)
+    /// <summary>As below, from an allocator: the 0x08 run in one piece (the lookup walks it
+    /// physically), then each 0x09 node.</summary>
+    public static void Allocate(LayerIndex li, UnitAllocator a)
+    {
+        int run = a.Alloc(li.GridUnits);
+        if (Allocate(li, run, gridOnly: true) != run + li.GridUnits) throw new InvalidOperationException("grid run");
+        foreach (var node in li.Nodes) node.BlockId = a.AllocId(node.Units);
+    }
+
+    public static int Allocate(LayerIndex li, int pos) => Allocate(li, pos, gridOnly: false);
+
+    static int Allocate(LayerIndex li, int pos, bool gridOnly)
     {
         for (int i = 0; i < li.GridBlocks.Count; i++)
         {
@@ -143,6 +154,7 @@ public static class Spatial
             li.GridBlocks[i] = ((uint)((pos << 8) | b.units), b.units, b.first, b.count);
             pos += b.units;
         }
+        if (gridOnly) return pos;
         foreach (var node in li.Nodes)
         {
             node.BlockId = (uint)((pos << 8) | node.Units);

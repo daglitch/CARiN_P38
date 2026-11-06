@@ -59,6 +59,8 @@ public sealed class TileSpec(int btype, Cell cell, Tile26 tile)
     public readonly Tile26 Tile = tile;
     public List<(int leaf, int twin)> EdgeTwins = new();
     public List<int> EdgeIds = new();
+    /// <summary>The model link of each section 4 record, in record order (street directory, POI links).</summary>
+    public int[] LinkSrc = [];
     public uint BlockId;
     public TileSpec? Parent;
     // link.py
@@ -489,8 +491,14 @@ public static partial class Tiles
     }
 
     // ------------------------------------------------------------------ main entry
-    public static RoadTiles Build(RoadModel m, List<string> strings, string regionLabel = "", Action<string>? log = null)
+    /// <summary>Street tiles name their links' cities: linkCity[model link] is the display name
+    /// ("san jose, ca") or null/"" for none; without it every tile names regionLabel (Phase 2).</summary>
+    public sealed record NameCtx(string Label, string?[]? LinkCity);
+
+    public static RoadTiles Build(RoadModel m, List<string> strings, string regionLabel = "", Action<string>? log = null,
+                                  string?[]? linkCity = null)
     {
+        var nctx = new NameCtx(regionLabel, linkCity);
         log ??= Console.WriteLine;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         string T() => $"  [{sw.Elapsed.TotalSeconds:F1} s]";
@@ -597,7 +605,7 @@ public static partial class Tiles
 
         rt.Roots[0] = root; rt.Cells[0] = leaves;
         var fits = new System.Text.Json.Nodes.JsonObject();
-        var (l0, fit0) = MakeTiles(0, leaves, pieces, edges, reach, strings, regionLabel, m);
+        var (l0, fit0) = MakeTiles(0, leaves, pieces, edges, reach, strings, nctx, m);
         rt.Levels[0] = l0;
         log($"street tiles written{T()}");
         if (fit0.Count > 0) fits["0x00"] = fit0;
@@ -605,7 +613,7 @@ public static partial class Tiles
         {
             var c = coarse[lv];
             rt.Roots[lv] = c.root; rt.Cells[lv] = c.leaves;
-            var (lt, fit) = MakeTiles(lv, c.leaves, c.pieces, c.edges, reach, strings, regionLabel, null);
+            var (lt, fit) = MakeTiles(lv, c.leaves, c.pieces, c.edges, reach, strings, nctx, null);
             rt.Levels[lv] = lt;
             if (fit.Count > 0) fits[$"0x0{lv}"] = fit;
         }
@@ -639,7 +647,7 @@ public static partial class Tiles
     }
 
     static (List<TileSpec>, System.Text.Json.Nodes.JsonObject) MakeTiles(int btype, List<Cell> leaves, List<Piece> pieces,
-        List<EdgeNode> edges, Dictionary<(long, long), int> reach, List<string> strings, string regionLabel, RoadModel? m)
+        List<EdgeNode> edges, Dictionary<(long, long), int> reach, List<string> strings, NameCtx regionLabel, RoadModel? m)
     {
         var byTile = new Dictionary<int, List<Piece>>();
         foreach (var p in pieces)
@@ -686,7 +694,7 @@ public static partial class Tiles
     }
 
     static TileSpec FitTile(int btype, Cell cell, List<Piece> ps, List<EdgeNode> edges, Dictionary<(long, long), int> reach,
-        List<string> strings, string regionLabel, Dictionary<(int, int), List<(int, bool)>> bans, Dictionary<string, int> fitLog)
+        List<string> strings, NameCtx regionLabel, Dictionary<(int, int), List<(int, bool)>> bans, Dictionary<string, int> fitLog)
     {
         var spec = OneTile(btype, cell, ps, edges, reach, strings, regionLabel, bans);
         if (!TooBig(spec.Tile)) return spec;
@@ -740,7 +748,7 @@ public static partial class Tiles
     }
 
     static TileSpec OneTile(int btype, Cell cell, List<Piece> ps, List<EdgeNode> edges, Dictionary<(long, long), int> reach,
-        List<string> strings, string regionLabel, Dictionary<(int, int), List<(int, bool)>> bans)
+        List<string> strings, NameCtx regionLabel, Dictionary<(int, int), List<(int, bool)>> bans)
     {
         bool street = btype == 0;
         var t = new Tile26(btype) { BBox = ((int)cell.X1, (int)cell.Y1, (int)cell.X2, (int)cell.Y2) };
@@ -780,6 +788,7 @@ public static partial class Tiles
         var posOf = new int[links.Count];
         for (int i = 0; i < order.Length; i++) posOf[order[i]] = i;
         links = order.Select(k => links[k]).ToList();
+        spec.LinkSrc = links.Select(l => l.Src).ToArray();
         foreach (var key in nodeOrder) nodes[key].Links = nodes[key].Links.Select(le => (posOf[le.link], le.end)).ToList();
         var n5 = nodeOrder.Where(k => nodes[k].Sec == 5).OrderBy(k => (nodes[k].Group, Loc(nodes[k].Pos))).ToList();
         var n6 = nodeOrder.Where(k => nodes[k].Sec == 6).OrderBy(k => Loc(nodes[k].Pos)).ToList();
@@ -940,7 +949,7 @@ public static partial class Tiles
         return o.Length > 60 ? o[..60] : o;
     }
 
-    static void Names(Tile26 t, List<LinkW> links, List<string> strings, string regionLabel, int[] s2Of)
+    static void Names(Tile26 t, List<LinkW> links, List<string> strings, NameCtx ctx, int[] s2Of)
     {
         var names = links.Select(L =>
         {
@@ -949,8 +958,13 @@ public static partial class Tiles
             return CleanName(nm);
         }).ToList();
         var distinct = names.Where(n => n != "").Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
-        var cl = CleanName(regionLabel);
-        string city = cl != "" ? cl : "unknown";
+        var cl = CleanName(ctx.Label);
+        string fallback = ctx.LinkCity != null ? "united states" : cl != "" ? cl : "unknown";
+        // the city of each link: its own (Phase 3b) or the region label
+        var cityOf = links.Select(L => ctx.LinkCity?[L.Src] is string c && c != "" ? c : fallback).ToList();
+        var cities = cityOf.Where((c, k) => names[k] != "").Distinct().OrderBy(c => c, StringComparer.Ordinal).ToList();
+        if (cities.Count == 0) cities.Add(fallback);
+        var cityIx = cities.Select((c, i) => (c, i)).ToDictionary(x => x.c, x => x.i);
         var blob = new List<byte>();
         var textAt = new Dictionary<string, int>();
         TextRef Text(string s)
@@ -962,7 +976,8 @@ public static partial class Tiles
 
         var s14 = new List<Rec>();
         foreach (var (s, ln, ty) in CountryS14) s14.Add(R([0, 0, ln, ty], (0, Text(s))));
-        s14.Add(R([0, 0, 2, 0], (0, Text(city))));
+        int city0 = s14.Count;
+        foreach (var c in cities) s14.Add(R([0, 0, 2, 0], (0, Text(c))));
         int street0 = s14.Count;
         foreach (var nm in distinct) s14.Add(R([0, 0, 2, (byte)(RouteName().IsMatch(nm) ? 0x10 : 0x08)], (0, Text(nm))));
         int n14 = s14.Count;
@@ -972,25 +987,29 @@ public static partial class Tiles
             R([0, 0, 0, CountryIdUs, 0, 0, 0, 0, 0, 0], (0, Text("united states")), (4, new Ref(14, 0))),
             R(new byte[10], (0, null), (4, new Ref(14, CountryS14.Length))),
         };
-        var s1 = new List<Rec>
-        {
-            R(new byte[10], (0, null), (2, null), (4, new Ref(0, 0)), (6, null), (8, null)),
-            R(new byte[10], (0, Text(city)), (2, null), (4, new Ref(0, 1)), (6, new Ref(14, CountryS14.Length)), (8, new Ref(14, n14))),
-            R(new byte[10], (0, null), (2, null), (4, new Ref(0, 0)), (6, new Ref(14, street0)), (8, new Ref(14, n14))),
-        };
+        var s1 = new List<Rec> { R(new byte[10], (0, null), (2, null), (4, new Ref(0, 0)), (6, null), (8, null)) };
+        foreach (var (c, i) in cities.Select((c, i) => (c, i)))
+            s1.Add(R(new byte[10], (0, Text(c)), (2, null), (4, new Ref(0, 1)), (6, new Ref(14, city0 + i)), (8, new Ref(14, n14))));
+        s1.Add(R(new byte[10], (0, null), (2, null), (4, new Ref(0, 0)), (6, new Ref(14, street0)), (8, new Ref(14, n14))));
+        bool single = ctx.LinkCity == null;          // Phase 2 layout: no locality, one city
         var s2 = new List<Rec> { R(new byte[10], (0, null), (2, null), (4, new Ref(1, 0)), (6, null), (8, null)) };
-        var recOf = new Dictionary<string, int>();
+        var recOf = new Dictionary<(string, string), int>();
         if (names.Any(n => n == ""))
         {
-            recOf[""] = s2.Count;
+            recOf[("", "")] = s2.Count;
             s2.Add(R(new byte[10], (0, null), (2, null), (4, new Ref(1, 1)), (6, new Ref(14, street0)), (8, new Ref(14, n14))));
         }
-        for (int j = 0; j < distinct.Count; j++)
+        var keys = names.Select((n, k) => (n, c: cityOf[k])).Where(x => x.n != "").Distinct()
+            .OrderBy(x => x.n, StringComparer.Ordinal).ThenBy(x => x.c, StringComparer.Ordinal).ToList();
+        foreach (var (n, c) in keys)
         {
-            recOf[distinct[j]] = s2.Count;
-            s2.Add(R(new byte[10], (0, Text(distinct[j])), (2, null), (4, new Ref(1, 1)), (6, new Ref(14, street0 + j)), (8, new Ref(14, n14))));
+            recOf[(n, c)] = s2.Count;
+            int j = distinct.IndexOf(n);
+            s2.Add(single
+                ? R(new byte[10], (0, Text(n)), (2, null), (4, new Ref(1, 1)), (6, new Ref(14, street0 + j)), (8, new Ref(14, n14)))
+                : R(new byte[10], (0, Text(n)), (2, Text(c)), (4, new Ref(1, 1 + cityIx[c])), (6, new Ref(14, street0 + j)), (8, new Ref(14, n14))));
         }
-        for (int k = 0; k < names.Count; k++) s2Of[k] = recOf[names[k]];
+        for (int k = 0; k < names.Count; k++) s2Of[k] = names[k] == "" ? recOf[("", "")] : recOf[(names[k], cityOf[k])];
         t.Secs[0].AddRange(s0); t.Secs[1].AddRange(s1); t.Secs[2].AddRange(s2); t.Secs[14].AddRange(s14);
         t.Blob = blob.ToArray();
     }

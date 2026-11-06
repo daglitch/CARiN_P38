@@ -115,6 +115,10 @@ public static class Program
 
     static int Help() { Console.WriteLine(Usage); return 2; }
 
+    /// <summary>"US-CA" -> "ca": the suffix of city names on the disc ("abbeville, al").</summary>
+    static string StateCode(Regions.Region x) =>
+        x.Codes.FirstOrDefault(c => c.Contains('-')) is string c ? c[(c.IndexOf('-') + 1)..].ToLowerInvariant() : "";
+
     static string Slug(string id) => id.Replace('/', '_');      // us/california+us/nevada -> us_california+us_nevada
     static string Cache(Args a) => Path.Combine(a.Out, "cache");
 
@@ -160,7 +164,8 @@ public static class Program
     static (RoadModel m, JsonObject cap) RunModel(Args a, Regions.Region r)
     {
         var got = r.Extracts.Select(x => Regions.Fetch(x, Cache(a), a.Refresh)).ToList();
-        var m = ModelBuilder.Build(got.Select((g, i) => new ModelBuilder.Extract(g.path, r.Extracts[i].Only is string o ? ModelBuilder.Selections[o] : null)).ToList(), a.Profile);
+        var m = ModelBuilder.Build(got.Select((g, i) => new ModelBuilder.Extract(g.path, r.Extracts[i].Only is string o ? ModelBuilder.Selections[o] : null,
+                StateCode(r.Extracts[i]))).ToList(), a.Profile);
         m.Stats["region"] = r.Id;
         m.Stats["pbf_md5"] = string.Join(",", got.Select(g => g.md5));
         var d = Path.Combine(a.Out, Slug(r.Id));

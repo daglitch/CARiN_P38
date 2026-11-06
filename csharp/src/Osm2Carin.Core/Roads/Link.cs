@@ -142,8 +142,16 @@ public static class Link
     /// neighbour IDs are patched into the bit stream (Encoder00.Parts). The result equals a fresh
     /// encoding of the final tile (the parity test against the Python tools checks this).</summary>
     public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6,
+                                     bool withIndex = false) =>
+        Run(rt, UnitAllocator.From(baseUnit), cf1, log, maxRounds, withIndex);
+
+    /// <summary>As above, with units handed out by `alloc` (Phase 3b: the free space of the original
+    /// carindb first, then behind it). The allocator is left after the last road block.</summary>
+    public static List<TileSpec> Run(RoadTiles rt, UnitAllocator alloc, bool cf1 = true, Action<string>? log = null, int maxRounds = 6,
                                      bool withIndex = false)
     {
+        var mark = alloc.Save();
+        int baseUnit = alloc.Pos;
         log ??= Console.WriteLine;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Prepare(rt);
@@ -186,16 +194,16 @@ public static class Link
         log($"link: encoded in {sw.Elapsed.TotalSeconds:F1} s");
         for (int rnd = 0; rnd < maxRounds; rnd++)
         {
-            int pos = baseUnit;
+            alloc.Restore(mark);
             for (int i = 0; i < specs.Count; i++)
             {
                 if (withIndex)
                     foreach (int lv in Order)
-                        if (layerStart[lv] == i && rt.Levels[lv].Count > 0) pos = Spatial.Allocate(rt.Index[lv], pos);
+                        if (layerStart[lv] == i && rt.Levels[lv].Count > 0) Spatial.Allocate(rt.Index[lv], alloc);
                 if (units[i] > 255) throw new InvalidOperationException("tile larger than 255 units");
-                specs[i].BlockId = (uint)((pos << 8) | units[i]);
-                pos += units[i];
+                specs[i].BlockId = alloc.AllocId(units[i]);
             }
+            int pos = alloc.Pos;
             foreach (var sp in specs) Fill(sp);
             int grown = 0;
             using var idProg = new Progress($"link round {rnd + 1}", specs.Count, "tiles");

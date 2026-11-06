@@ -48,6 +48,10 @@ public sealed class RoadModel
     public readonly List<(string name, Array data)> Arrays = new();
     public List<string> Strings = new();
     public JsonObject Stats = new();
+    /// <summary>Named places (place=city/town/village/hamlet/suburb nodes) of the fully detailed
+    /// extracts, for the city list (Phase 3b). Kept out of Arrays/Strings, which match model.py;
+    /// saved as &lt;prefix&gt;.places.json.</summary>
+    public List<Place> Places = new();
 
     public T[] Get<T>(string name) => (T[])Arrays.First(a => a.name == name).data;
     public void Set(string name, Array data)
@@ -61,6 +65,7 @@ public sealed class RoadModel
         Npz.Write(prefix + ".npz", Arrays);
         var meta = new JsonObject { ["stats"] = JsonNode.Parse(Stats.ToJsonString()), ["strings"] = new JsonArray(Strings.Select(s => (JsonNode?)s).ToArray()) };
         File.WriteAllText(prefix + ".json", meta.ToJsonString(new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+        File.WriteAllText(prefix + ".places.json", JsonSerializer.Serialize(Places));
     }
 
     public static RoadModel Load(string prefix)
@@ -70,9 +75,14 @@ public sealed class RoadModel
         var meta = JsonNode.Parse(File.ReadAllText(prefix + ".json"))!;
         m.Strings = meta["strings"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
         m.Stats = meta["stats"]!.AsObject();
+        if (File.Exists(prefix + ".places.json"))
+            m.Places = JsonSerializer.Deserialize<List<Place>>(File.ReadAllText(prefix + ".places.json")) ?? new();
         return m;
     }
 }
+
+/// <summary>A named place from OSM: Kind is the place=* value, State the extract's state code ("ca").</summary>
+public sealed record Place(long Osm, int X, int Y, string Kind, string Name, string State);
 
 /// <summary>OSM .osm.pbf -> road model + POIs: port of tools/osm2carin/model.py, step for step.</summary>
 public static class ModelBuilder
@@ -106,13 +116,16 @@ public static class ModelBuilder
     /// <summary>An extract to read. Only != null: just these highway=* values, no POIs, and only nodes
     /// inside the disc's quadtree root (Tiles.DiscRoot). Used for the rest of the country around fully
     /// detailed regions, as the original disc has the US highway network.</summary>
-    public sealed record Extract(string Path, IReadOnlySet<string>? Only = null)
+    public sealed record Extract(string Path, IReadOnlySet<string>? Only = null, string State = "")
     {
         public bool MajorOnly => Only != null;
     }
 
     /// <summary>Road selections for a partial region: "highways" = motorways and trunk roads
     /// (interstates, freeways, US highways), "major" adds primary roads.</summary>
+    /// <summary>place=* values kept as named places (a POI-tagged place stays a POI as well).</summary>
+    public static readonly HashSet<string> PlaceKinds = ["city", "town", "village", "hamlet", "suburb", "neighbourhood", "quarter"];
+
     public static readonly Dictionary<string, HashSet<string>> Selections = new()
     {
         ["highways"] = ["motorway", "motorway_link", "trunk", "trunk_link"],
@@ -225,9 +238,10 @@ public static class ModelBuilder
         Array.Sort(need);
         var nids = new List<long>(); var nxs = new List<int>(); var nys = new List<int>();
         var pois = new List<PoiRec>();
+        var places = new List<Place>();
         foreach (var ex in extracts)
         using (var prog = Progress.Bytes("nodes " + System.IO.Path.GetFileName(ex.Path).Replace("-latest.osm.pbf", ""), new FileInfo(ex.Path).Length))
-        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = ex.MajorOnly ? null : new HashSet<string>(Poi.Keys) }, progress: prog))
+        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = ex.MajorOnly ? null : new HashSet<string>(Poi.Keys) { "place" } }, progress: prog))
         {
             foreach (var n in blk.Nodes)
             {
@@ -239,6 +253,11 @@ public static class ModelBuilder
                     nids.Add(n.Id); nxs.Add(x); nys.Add(y);
                 }
                 if (n.Tags == null || ex.MajorOnly) continue;
+                if (n.Valid && n.Tags.Get("place") is string pk && PlaceKinds.Contains(pk) && !string.IsNullOrWhiteSpace(n.Tags.Get("name")))
+                {
+                    var (px, py) = Geo.FromLonLat(n.Lon, n.Lat);
+                    places.Add(new Place(n.Id, px, py, pk, n.Tags.Get("name")!, ex.State));
+                }
                 if (multi && !seenPoiNodes.Add(n.Id)) continue;
                 var pt = Poi.PoiTags(n.Tags);
                 if (pt != null && pt.Value.cat == null) drop.Add(PoiDropReason(pt.Value.value));
@@ -424,6 +443,8 @@ public static class ModelBuilder
         m.Stats = MakeStats(pbfs, profile, drop, L, lengthM, linkName, pois, S, gid.Length, SX.Length, nWays,
                             restrictions.Count, tr["from_link"].Length);
         m.Stats["seconds"] = Math.Round(sw.Elapsed.TotalSeconds, 1);
+        m.Places = places.DistinctBy(p => p.Osm).ToList();
+        log($"places: {m.Places.Count:N0} ({string.Join(", ", m.Places.GroupBy(p => p.Kind).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count():N0}"))})");
         return m;
     }
 
