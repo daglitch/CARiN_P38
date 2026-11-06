@@ -92,8 +92,24 @@ The decoder was recovered from head-unit firmware by **OpenCarin** (https://gith
 - **0x18 TMC tables:** IDs 0x051, 0x061, 0x191 = **CC 1 (USA), LTN 5, 6, 25**.
 - **0x17 TMC locations:** **56-byte records** at DB-REL 26 (vs 100 at DB-REL 34). Fields: code, type, road number/road name/location name/second name pointers, road code, next point, and **location X/Y at `+0x20/+0x24`**. Example: "CA-12 / WRIGHT RD" decodes to 38.4274° N, 122.7690° W. Area names are US regions ("SAN FRANCISCO METRO"…).
 
+### Phase 0 (2026-11-05): rebuilding and patching the disc
+Tools: `tools/cdimage.py` (raw image split/build/verify), `tools/phase0_roundtrip.py`, `tools/phase0_patch.py`, tests in `tests/test_phase0.py`. Output under `out/phase0/`.
+
+1. **Raw image rebuilt byte-identically [verified].** `cdimage.py split` → `track1.iso` (186,541 Form 1 sectors of user data = the ISO volume size in the PVD) + `audio.raw` (300 sectors). `cdimage.py build` regenerates sync, BCD MSF header (LBA + 150), subheader, EDC and P/Q ECC for every sector, adds 150 zero Form 2 postgap sectors, appends the audio and writes the cue. The result has the same SHA-1 as the original `.bin`, and the cue matches line for line (CRLF). Sector facts:
+   - every data sector is Mode 2 Form 1 with subheader `00 00 08 00` (no EOR/EOF bits, not even at file ends);
+   - postgap: subheader `00 00 20 00`, zero data, **EDC present** (`3f13b0be`);
+   - ECC computed with the 4 header bytes zeroed (Mode 2 rule). An independent check: every original sector regenerates from its own user data.
+2. **CF=1 type 0x00 round trip with OpenCarin [verified on a sample].** DB-REL 26, subrel 8, 2048-byte units. Every 5th CF=1 street parcel (**4,806 of 24,028**): decode → `encode_type00` → decode matched on **4,806/4,806**, 0 errors, all fit their extent; re-encoded 18.90 MB vs 19.04 MB original (−0.75%). About 0.2 s per parcel (`out/phase0/roundtrip-step5.json`).
+   - Re-encoded bytes are **never bit-identical** to the disc: OpenCarin uses no text dictionary and picks inheritance flags afresh. They match **after decoding** (bytes 4.. of the decoded block), and the re-encoded block is 0.75% *smaller*, so it always fits its original extent.
+   - Header bytes 0–7 and the 116-byte plain prolog (incl. the bounding box at `+0x44`) are unchanged.
+3. **Test images [built; car test pending].** Nothing moves: same blocks, sectors, ISO directory and file sizes.
+   - `test-patched.bin/.cue`: POI name `land rover san jose` → `land rover p38 test`, in place in 4 plain 0x10 (POI index) blocks (ISO sectors 31643, 31837, 43368, 43376). The dealer is at 5080 Stevens Creek Blvd, San Jose, 408-247-7600. Tests integrity checks.
+   - `test-reencoded.bin/.cue`: the above, plus the street `stevens creek blvd` → `stevens creek test` in the 12 CF=1 street parcels that carry it (Cupertino → San Jose, lat ≈ 37.32, lon −122.09 … −121.93), re-encoded with `encode_type00`. Tests whether the unit accepts OpenCarin's bitstream. The street directory (0x0E), POI addresses (0x10) and coarse levels are not changed, so destination entry still lists "stevens creek blvd".
+   - Both: EDC/ECC verified on all 186,691 data sectors; reading back the `.bin` (`cdimage.py split` and `carin.py iso`) gives exactly the patched ISO.
+4. OpenCarin notes: `carin/osm` and `carin/serializer` are **empty packages** in the cloned revision (`1e5e077`), so Phase 1+ has to write the OSM ingestion and the DB serializer. `carin/parser/volume_edit.py` (in-place block rewrite) matches what `phase0_patch.py` does. Its `carin` package name clashes with our `tools/carin.py` when both are imported; import ours under another name.
+
 ### Still open
-1. **Does the head unit check data integrity?** That could be a per-block CRC, a whole-DB checksum, or the CD-ID/BSW-REL list. Test: burn a straight copy, then one with a single POI name patched at the same length. Untested.
+1. **Does the head unit check data integrity?** That could be a per-block CRC, a whole-DB checksum, or the CD-ID/BSW-REL list. The test images are built (Phase 0 above); the car test is pending.
 2. **Writing a new disc (the OSM converter).** OpenCarin targets this ("compile OpenStreetMap data into bootable navigation discs") and includes a CF=1 encoder for type 0x0E, plus `encode_type00`. Next steps:
    - check its serializer against DB-REL 26 and 2048-byte units;
    - round-trip one of our parcels (decode → encode → decode);
