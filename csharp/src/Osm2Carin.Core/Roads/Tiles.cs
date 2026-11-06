@@ -78,6 +78,11 @@ public sealed class RoadTiles
     public readonly Dictionary<int, Cell> Roots = new();
     public System.Text.Json.Nodes.JsonObject Stats = new();
     public int EndUnit;
+    /// <summary>Spatial index per road layer (when linked with indexes) and its root square.</summary>
+    public readonly Dictionary<int, Spatial.LayerIndex> Index = new();
+    public (long x, long y, long side) IndexRoot;
+    /// <summary>Every road-layer block in physical order: per layer [0x08 grid][0x09 nodes][tiles].</summary>
+    public List<byte[]> Blocks = new();
 }
 
 /// <summary>Geometry helpers of tiles.py, with the same floating-point steps (numpy sums are

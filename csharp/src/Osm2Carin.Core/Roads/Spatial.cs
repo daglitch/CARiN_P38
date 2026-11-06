@@ -60,7 +60,20 @@ public static class Spatial
     /// <summary>Lay out one layer's index over the root square (x0, y0, side) for the given tiles.</summary>
     public static LayerIndex Build(int layer, List<TileSpec> tiles, long x0, long y0, long side)
     {
-        long cell = Math.Min(CellSide[layer], side);
+        // The disc's cell side, halved until no cell needs more than MaxQ x MaxQ items (the disc's
+        // largest 0x09 has 64 x 64; our coarse tiles are unions of street tiles, so their edges can
+        // be finer than the original's and need smaller cells to keep the items few).
+        for (long cell = Math.Min(CellSide[layer], side); ; cell /= 2)
+        {
+            var li = BuildWith(layer, tiles, x0, y0, side, cell);
+            if (li.Nodes.All(n => n.Q <= MaxQ) || cell <= CellSide[0]) return li;
+        }
+    }
+
+    public const int MaxQ = 64;
+
+    static LayerIndex BuildWith(int layer, List<TileSpec> tiles, long x0, long y0, long side, long cell)
+    {
         int n = (int)(side / cell);
         var li = new LayerIndex { Layer = layer, X0 = x0, Y0 = y0, Side = side, Cell = cell, N = n, Grid = new CellNode?[n * n] };
         // tiles per cell

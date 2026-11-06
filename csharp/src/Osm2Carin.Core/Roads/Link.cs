@@ -141,13 +141,26 @@ public static class Link
     /// places of the encoding, so after allocation the head is rebuilt from the final tile and the S6
     /// neighbour IDs are patched into the bit stream (Encoder00.Parts). The result equals a fresh
     /// encoding of the final tile (the parity test against the Python tools checks this).</summary>
-    public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6)
+    public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6,
+                                     bool withIndex = false)
     {
         log ??= Console.WriteLine;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Prepare(rt);
         log($"link: prepared in {sw.Elapsed.TotalSeconds:F1} s");
         var specs = Order.SelectMany(lv => rt.Levels[lv]).ToList();
+        if (withIndex)
+        {
+            // one root square for every layer: the disc's own when the region lies inside it
+            var r = rt.Roots[0];
+            var (dx, dy, ds) = Tiles.DiscRoot;
+            rt.IndexRoot = r.X1 >= dx && r.Y1 >= dy && r.X2 <= dx + ds && r.Y2 <= dy + ds ? Tiles.DiscRoot : (r.X1, r.Y1, r.W);
+            foreach (int lv in Order)
+                rt.Index[lv] = Spatial.Build(lv, rt.Levels[lv], rt.IndexRoot.x, rt.IndexRoot.y, rt.IndexRoot.side);
+            log($"link: spatial index laid out ({string.Join(", ", Order.Select(lv => $"0x0{lv}: {rt.Index[lv].GridBlocks.Count} grid + {rt.Index[lv].Nodes.Count} cell blocks"))})");
+        }
+        var layerStart = new Dictionary<int, int>();
+        { int i0 = 0; foreach (int lv in Order) { layerStart[lv] = i0; i0 += rt.Levels[lv].Count; } }
         foreach (var sp in specs) sp.BlockId = 0x00FFFF01;
         foreach (var sp in specs) Fill(sp);
         var units = new int[specs.Count];
@@ -173,6 +186,9 @@ public static class Link
             int pos = baseUnit;
             for (int i = 0; i < specs.Count; i++)
             {
+                if (withIndex)
+                    foreach (int lv in Order)
+                        if (layerStart[lv] == i && rt.Levels[lv].Count > 0) pos = Spatial.Allocate(rt.Index[lv], pos);
                 if (units[i] > 255) throw new InvalidOperationException("tile larger than 255 units");
                 specs[i].BlockId = (uint)((pos << 8) | units[i]);
                 pos += units[i];
@@ -202,7 +218,17 @@ public static class Link
                 sp.Raw = o;
             });
             log($"link round {rnd + 1}: {specs.Count:N0} tiles, {pos - baseUnit:N0} units, {grown} grew  [{sw.Elapsed.TotalSeconds:F1} s]");
-            if (grown == 0) { rt.EndUnit = pos; return specs; }
+            if (grown == 0)
+            {
+                rt.EndUnit = pos;
+                rt.Blocks = new List<byte[]>();
+                foreach (int lv in Order)
+                {
+                    if (withIndex && rt.Levels[lv].Count > 0) rt.Blocks.AddRange(Spatial.Write(rt.Index[lv]));
+                    rt.Blocks.AddRange(rt.Levels[lv].Select(sp => sp.Raw));
+                }
+                return specs;
+            }
         }
         throw new InvalidOperationException("block allocation did not settle");
     }
