@@ -63,8 +63,10 @@ public static class Validate
                 foreach (var r in t.Secs[sec])
                     streetPos.TryAdd((t.BBox.X1 + 64L * BinaryPrimitives.ReadUInt16BigEndian(r.Raw), t.BBox.Y1 + 64L * BinaryPrimitives.ReadUInt16BigEndian(r.Raw.AsSpan(2))), 0);
         });
+        using var prog = new Progress("check tiles", sample.Count, "tiles");
         Parallel.ForEach(sample, sp =>
         {
+            prog.Add();
             var d = sp.Decoded;
             if (sp.Cf1)
             {

@@ -166,8 +166,10 @@ public static class Link
         var units = new int[specs.Count];
         var parts = new Encoder00.Parts?[specs.Count];
         var widths = new (byte, byte)[specs.Count];
+        using var encProg = new Progress("encode", specs.Count, "tiles");
         Parallel.For(0, specs.Count, i =>
         {
+            encProg.Add();
             var sp = specs[i];
             var plain = PlainOf(sp, out int used);
             int len = used;
@@ -180,6 +182,7 @@ public static class Link
             }
             units[i] = Math.Max(1, (Math.Max(len, 8) + Fmt.Unit - 1) / Fmt.Unit);
         });
+        encProg.Dispose();
         log($"link: encoded in {sw.Elapsed.TotalSeconds:F1} s");
         for (int rnd = 0; rnd < maxRounds; rnd++)
         {
@@ -195,8 +198,10 @@ public static class Link
             }
             foreach (var sp in specs) Fill(sp);
             int grown = 0;
+            using var idProg = new Progress($"link round {rnd + 1}", specs.Count, "tiles");
             Parallel.For(0, specs.Count, i =>
             {
+                idProg.Add();
                 var sp = specs[i];
                 var plain = PlainOf(sp, out int used);
                 byte[] raw;
@@ -217,6 +222,7 @@ public static class Link
                 raw.CopyTo(o, 0);
                 sp.Raw = o;
             });
+            idProg.Dispose();
             log($"link round {rnd + 1}: {specs.Count:N0} tiles, {pos - baseUnit:N0} units, {grown} grew  [{sw.Elapsed.TotalSeconds:F1} s]");
             if (grown == 0)
             {

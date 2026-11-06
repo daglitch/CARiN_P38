@@ -178,8 +178,10 @@ public static class Graft
         }
         var child = new Dictionary<int, int> { [3] = 0, [2] = 3, [1] = 2 };
         var parent = new Dictionary<int, int> { [0] = 3, [3] = 2, [2] = 1 };
+        using var prog = new Progress("check disc", specs.Count, "tiles");
         foreach (var sp in specs)
         {
+            prog.Add();
             var d = sp.Decoded;
             Ref(sp.BlockId, sp.BType, "tile");
             if (!db.AsSpan((int)(sp.BlockId >> 8) * Fmt.Unit, sp.Raw.Length).SequenceEqual(sp.Raw)) Bad($"tile 0x{sp.BlockId:x8} bytes differ");

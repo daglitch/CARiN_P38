@@ -650,13 +650,15 @@ public static partial class Tiles
         var bans = btype == 0 && m != null ? Bans(m) : new Dictionary<(int, int), List<(int, bool)>>();
         var specs = new TileSpec[leaves.Count];
         var fitLogs = new Dictionary<string, int>[leaves.Count];
-        Parallel.For(0, leaves.Count, li =>
-        {
-            var cell = leaves[li];
-            var fl = new Dictionary<string, int>();
-            specs[li] = FitTile(btype, cell, byTile.GetValueOrDefault(cell.LeafId) ?? new(), edges, reach, strings, regionLabel, bans, fl);
-            fitLogs[li] = fl;
-        });
+        using (var prog = new Progress($"tiles 0x{btype:X2}", leaves.Count, "tiles"))
+            Parallel.For(0, leaves.Count, li =>
+            {
+                var cell = leaves[li];
+                var fl = new Dictionary<string, int>();
+                specs[li] = FitTile(btype, cell, byTile.GetValueOrDefault(cell.LeafId) ?? new(), edges, reach, strings, regionLabel, bans, fl);
+                fitLogs[li] = fl;
+                prog.Add();
+            });
         // merge the fit logs in leaf order, keys in first-seen order (the Python dict)
         var order = new List<string>();
         var sum = new Dictionary<string, int>();

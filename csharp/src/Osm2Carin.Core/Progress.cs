@@ -5,7 +5,8 @@ namespace Osm2Carin.Core;
 /// <summary>A progress bar with elapsed time and ETA for one long step, written to stderr.
 ///   On a terminal: one line redrawn in place (at most 5 times a second), e.g.
 ///     tiles 0x00  [###########.........]  55%  20,512 / 37,281  0:14 elapsed, ETA 0:11
-///   Redirected (a log file): a plain line at every 10%, so logs stay readable.
+///   Redirected (a log file): a plain line at every 10% once the step has run 5 s, and the final line,
+///   so logs stay readable.
 /// Thread-safe: Add/Set may be called from Parallel loops. Dispose prints the final line.
 /// Steps announce themselves with Stage ("[3/7] Road tiles") so a whole run shows where it is.</summary>
 public sealed class Progress : IDisposable
@@ -76,7 +77,7 @@ public sealed class Progress : IDisposable
         else
         {
             int dec = (int)(10.0 * Math.Min(Interlocked.Read(ref done), total) / total);
-            if (dec <= lastDecile || dec == 10) return;
+            if (dec <= lastDecile || dec == 10 || now < 5000) return;     // quick steps: only the final line
             lock (Gate)
             {
                 if (closed || dec <= lastDecile) return;

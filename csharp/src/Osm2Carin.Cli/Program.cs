@@ -252,14 +252,22 @@ public static class Program
         string isoIn = Path.Combine(orig, "track1.iso"), audio = Path.Combine(orig, "audio.raw");
         if (!File.Exists(isoIn))
             throw new KeyNotFoundException($"{isoIn} not found: run `osm2carin cd-split <original .bin> {orig}` first");
+        var runTime = Stopwatch.StartNew();
+        var d = Path.Combine(a.Out, Slug(r.Id));
+        bool haveModel = File.Exists(Path.Combine(d, "model.npz"));
+        int nStages = haveModel ? 4 : 5, stage = 0;
+        Progress.Stage(++stage, nStages, "Original disc");
         var iso = Graft.Open(isoIn);
         int baseUnit = Graft.BaseUnit(iso);
         Console.WriteLine($"original: carindb at LBA {iso.CarindbLba}, {baseUnit:N0} units; our layers start there");
-        var d = Path.Combine(a.Out, Slug(r.Id));
-        RoadModel? m = File.Exists(Path.Combine(d, "model.npz")) ? RoadModel.Load(Path.Combine(d, "model")) : null;
+        RoadModel? m = null;
+        if (haveModel) m = RoadModel.Load(Path.Combine(d, "model"));
+        else { Progress.Stage(++stage, nStages, $"Road model from OSM ({string.Join(", ", r.Extracts.Select(x => x.Id))})"); m = RunModel(a, r).m; }
+        Progress.Stage(++stage, nStages, "Road tiles, spatial index and tile checks");
         int rc = RunTiles(a, r, m, baseUnit, out var rt, out var specs);
         if (rc != 0 && !a.Force) { Console.WriteLine("road tile checks failed; not building a disc (--force to build anyway)"); return rc; }
 
+        Progress.Stage(++stage, nStages, "Graft onto the original carindb and check it");
         var (newIso, db, rep) = Graft.Build(iso, rt);
         var original = iso.Bytes.AsSpan((int)((long)iso.CarindbLba * 2048), iso.CarindbSize).ToArray();
         var (res, problems) = Graft.Check(db, original, rt, specs);
@@ -271,6 +279,7 @@ public static class Program
         string name = Slug(r.Id) + "-3a";
         Directory.CreateDirectory(Path.Combine(outDir, "work"));        // the ISO is a working file: burn the .cue
         string isoOut = Path.Combine(outDir, "work", name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
+        Progress.Stage(++stage, nStages, "Write and verify the .bin/.cue");
         File.WriteAllBytes(isoOut, newIso);
         int t1 = CdImage.Build(isoOut, bin, File.Exists(audio) ? audio : null);
         var v = CdImage.Verify(bin);
@@ -290,6 +299,7 @@ public static class Program
         Console.WriteLine($"wrote {bin} and .cue; report {Path.Combine(outDir, "disc-report.json")}");
         bool bad = problems.Count > 0 || v.Form1Bad + v.Form2Bad > 0 || !(bool)res["chain covers the file"]! || (long)res["tiles missed from 0x07"]! > 0;
         Console.WriteLine(bad ? "PROBLEMS: " + string.Join("; ", problems) : "all disc checks passed");
+        Console.WriteLine($"total time {(int)runTime.Elapsed.TotalMinutes}:{runTime.Elapsed.Seconds:00}");
         return bad ? 1 : 0;
     }
 

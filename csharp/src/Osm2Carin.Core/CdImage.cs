@@ -127,6 +127,7 @@ public static class CdImage
         using var output = File.Create(binPath);
         var user = new byte[chunk * User];
         var raw = new byte[chunk * Raw];
+        using var prog = new Progress("write .bin", n, "sectors");
         for (int lba = 0; lba < n; lba += chunk)
         {
             int m = Math.Min(chunk, n - lba);
@@ -134,6 +135,7 @@ public static class CdImage
             int baseLba = lba;
             Parallel.For(0, m, k => Form1Sector(user.AsSpan(k * User, User), baseLba + k, raw.AsSpan(k * Raw, Raw)));
             output.Write(raw, 0, m * Raw);
+            prog.Add(m);
         }
         var sec = new byte[Raw];
         for (int k = 0; k < postgap; k++)
@@ -181,31 +183,45 @@ public static class CdImage
     /// <summary>Regenerate every data sector from its own user data and compare.</summary>
     public static VerifyResult Verify(string binPath)
     {
-        int ok1 = 0, bad1 = 0, ok2 = 0, bad2 = 0;
-        int? firstBad = null;
+        int ok1 = 0, bad1 = 0, ok2 = 0, bad2 = 0, firstBad = int.MaxValue;
         using var input = File.OpenRead(binPath);
-        var s = new byte[Raw];
-        var regen = new byte[Raw];
-        while (input.ReadAtLeast(s, Raw, throwOnEndOfStream: false) == Raw)
+        const int chunk = 8192;
+        var buf = new byte[chunk * Raw];
+        using var prog = new Progress("verify .bin", input.Length / Raw, "sectors");
+        while (true)
         {
-            if (!s.AsSpan(0, 12).SequenceEqual(Sync)) continue;
-            int lba = Lba(s);
-            if ((s[18] & 0x20) == 0)
+            int got = input.ReadAtLeast(buf, buf.Length, throwOnEndOfStream: false) / Raw;
+            if (got == 0) break;
+            Parallel.For(0, got, () => new byte[Raw], (k, _, regen) =>
             {
-                Form1Sector(s.AsSpan(24, User), lba, regen, s.AsSpan(16, 4));
-                if (regen.AsSpan().SequenceEqual(s)) ok1++;
-                else { bad1++; firstBad ??= lba; }
-            }
-            else
-            {
-                uint e = Edc(s.AsSpan(16, 2332));
-                if (BinaryPrimitives.ReadUInt32LittleEndian(s.AsSpan(2348)) == e) ok2++; else bad2++;
-            }
+                var s = buf.AsSpan(k * Raw, Raw);
+                if (!s[..12].SequenceEqual(Sync)) return regen;            // audio
+                int lba = Lba(s);
+                if ((s[18] & 0x20) == 0)
+                {
+                    Form1Sector(s.Slice(24, User), lba, regen, s.Slice(16, 4));
+                    if (regen.AsSpan().SequenceEqual(s)) Interlocked.Increment(ref ok1);
+                    else
+                    {
+                        Interlocked.Increment(ref bad1);
+                        int cur;
+                        while (lba < (cur = Volatile.Read(ref firstBad)) && Interlocked.CompareExchange(ref firstBad, lba, cur) != cur) { }
+                    }
+                }
+                else
+                {
+                    uint e = Edc(s.Slice(16, 2332));
+                    if (BinaryPrimitives.ReadUInt32LittleEndian(s[2348..]) == e) Interlocked.Increment(ref ok2); else Interlocked.Increment(ref bad2);
+                }
+                return regen;
+            }, _ => { });
+            prog.Add(got);
+            if (got < chunk) break;
         }
-        return new VerifyResult(ok1, bad1, ok2, bad2, firstBad);
+        return new VerifyResult(ok1, bad1, ok2, bad2, firstBad == int.MaxValue ? null : firstBad);
     }
 
-    static int Lba(byte[] s)
+    static int Lba(ReadOnlySpan<byte> s)
     {
         static int D(byte b) => (b >> 4) * 10 + (b & 15);
         return (D(s[12]) * 60 + D(s[13])) * 75 + D(s[14]) - 150;
