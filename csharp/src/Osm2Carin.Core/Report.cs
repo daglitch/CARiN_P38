@@ -12,8 +12,10 @@ public static class Report
         WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    static double Num(JsonNode n) => double.Parse(n.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
+
     static string N(JsonNode? n) => n == null ? "-" : n.GetValueKind() == JsonValueKind.Number
-        ? (n.GetValue<double>() % 1 == 0 ? n.GetValue<double>().ToString("N0") : n.GetValue<double>().ToString("N1")) : n.ToString();
+        ? (Num(n) % 1 == 0 ? Num(n).ToString("N0") : Num(n).ToString("N1")) : n.ToString();
 
     public static string Write(JsonObject s, string outDir)
     {
@@ -22,7 +24,7 @@ public static class Report
         var L = new List<string>
         {
             $"# osm2carin report: {s["region"]}", "",
-            $"- extract: `{s["pbf"]}` ({s["pbf_bytes"]!.GetValue<long>() / 1048576.0:N1} MiB, md5 {s["pbf_md5"]})",
+            $"- extract: `{s["pbf"]}` ({Num(s["pbf_bytes"]!) / 1048576.0:N1} MiB, md5 {s["pbf_md5"]})",
             $"- profile: {s["profile"]}; model built in {s["seconds"]} s", "",
             "## In (OSM)", "",
             $"- road ways used: {N(s["road_ways"])}",
@@ -42,13 +44,13 @@ public static class Report
         {
             var cap = e["capacity"]!.AsObject();
             L.AddRange(["", "## Size estimate", "",
-                $"- carindb ~{e["carindb_bytes"]!.GetValue<long>() / 1048576.0:N0} MiB (incl. {e["margin"]!.GetValue<double>() - 1:P0} margin)",
+                $"- carindb ~{Num(e["carindb_bytes"]!) / 1048576.0:N0} MiB (incl. {Num(e["margin"]!) - 1:P0} margin)",
                 $"- total {N(cap["total_sectors"])} sectors ({cap["mib"]} MiB): {Estimate.Percent(cap, "74 min")}% of a 74-min CD-R, {Estimate.Percent(cap, "80 min")}% of an 80-min CD-R"]);
             foreach (var a in e["advice"]!.AsArray()) L.Add($"- {a}");
         }
         if (s["tiles"] is JsonObject t)
         {
-            L.AddRange(["", "## Road tiles", "", $"- {N(t["units"])} units ({t["units"]!.GetValue<long>() * 2048 / 1048576.0:N1} MiB), built in {t["seconds"]} s", "",
+            L.AddRange(["", "## Road tiles", "", $"- {N(t["units"])} units ({Num(t["units"]!) * 2048 / 1048576.0:N1} MiB), built in {t["seconds"]} s", "",
                 "| block type | blocks | units | CF=1 |", "|---|---|---|---|"]);
             foreach (var (k, v) in t["blocks"]!.AsObject()) L.Add($"| {k} | {N(v!["blocks"])} | {N(v["units"])} | {N(v["cf1"])} |");
             L.AddRange(["", "Checks:", ""]);
@@ -60,7 +62,7 @@ public static class Report
             }
         }
         L.AddRange(["", "## Dropped", "", "| what | count |", "|---|---|"]);
-        foreach (var (k, v) in s["dropped"]!.AsObject().OrderByDescending(kv => kv.Value!.GetValue<long>())) L.Add($"| {k} | {N(v)} |");
+        foreach (var (k, v) in s["dropped"]!.AsObject().OrderByDescending(kv => Num(kv.Value!))) L.Add($"| {k} | {N(v)} |");
         var md = Path.Combine(outDir, "report.md");
         File.WriteAllText(md, string.Join("\n", L) + "\n", new UTF8Encoding(false));
         return md;

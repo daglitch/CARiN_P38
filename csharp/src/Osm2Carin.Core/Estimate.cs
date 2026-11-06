@@ -14,15 +14,15 @@ public static class Estimate
     public static JsonObject Calibration =>
         cal ??= JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "calibration.json")))!.AsObject();
 
-    static double D(string k) => Calibration[k]!.GetValue<double>();
+    static double D(string k) => JsonX.D(Calibration[k]);
 
     public static double CarindbBytes(double links, double shape, double pois, bool withPois = true) =>
         links * D("bytes_per_link") + shape * D("bytes_per_shape_point") + (withPois ? pois * D("bytes_per_poi") : 0) + D("fixed_bytes");
 
     public static JsonObject FromPbf(long pbfBytes, string profile = "default", bool withPois = true)
     {
-        double links = pbfBytes * Calibration["links_per_pbf_byte"]![profile]!.GetValue<double>();
-        double shape = pbfBytes * Calibration["shape_points_per_pbf_byte"]![profile]!.GetValue<double>();
+        double links = pbfBytes * JsonX.D(Calibration["links_per_pbf_byte"]![profile]);
+        double shape = pbfBytes * JsonX.D(Calibration["shape_points_per_pbf_byte"]![profile]);
         double pois = withPois ? pbfBytes * D("pois_per_pbf_byte") : 0;
         return new JsonObject
         {
@@ -53,7 +53,7 @@ public static class Estimate
     }
 
     public static bool Fits(JsonObject cap, string size) => cap["fits"]![size]!.GetValue<bool>();
-    public static double Percent(JsonObject cap, string size) => cap["percent"]![size]!.GetValue<double>();
+    public static double Percent(JsonObject cap, string size) => JsonX.D(cap["percent"]![size]);
 
     public static List<string> Advice(JsonObject cap, string profile)
     {
@@ -67,7 +67,7 @@ public static class Estimate
         else if (Fits(cap, "80 min")) l.Add($"WARNING: needs an 80-min CD-R ({p80}%); it will not fit a 74-min disc ({p74}%).");
         else
         {
-            double over = cap["total_sectors"]!.GetValue<long>() / 360000.0;
+            double over = JsonX.L(cap["total_sectors"]) / 360000.0;
             l.Add($"ERROR: too big for any CD-R: {p80}% of an 80-min disc ({over:F1}x).");
             l.Add("To make it fit, try one or more of:");
             l.Add("  - a smaller region (a state instead of a country, e.g. \"osm2carin regions <name>\");");

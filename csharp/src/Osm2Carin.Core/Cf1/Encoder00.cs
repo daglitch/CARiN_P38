@@ -16,6 +16,8 @@ public sealed class Encoder00
     readonly int pb;
     readonly byte[] widths;
     int? cacheS7, cacheS2;
+    /// <summary>Bit positions (in the bit stream) of the 32-bit S6 neighbour BLOCK_IDs.</summary>
+    readonly List<long> s6IdBits = new();
     Dictionary<string, int> pbits = new();
 
     Encoder00(byte[] decoded, IReadOnlyDictionary<int, int> table, int dbrel, int subrel)
@@ -217,6 +219,7 @@ public sealed class Encoder00
             if (extra)
             {
                 int o5 = Tv(T.RecS5);
+                s6IdBits.Add(bw.Position);
                 bw.Put(32, BinaryPrimitives.ReadUInt32BigEndian(D.AsSpan(cur + o5)));
                 Array.Copy(D, cur + o5, sh, cur + o5, 4);
                 Put(subrel >= 9 ? 16 : 14, Rw(cur + o5 + 4), $"S{idx} +{o5 + 4}");
@@ -394,44 +397,67 @@ public sealed class Encoder00
         return null;
     }
 
-    /// <summary>Greedy choice of up to n dictionary words, as OpenCarin's choose_words (same ties).</summary>
+    /// <summary>Greedy choice of up to n dictionary words, as OpenCarin's choose_words: the same windows,
+    /// counted without overlap in the same order, the same gain and the same ties (the first best in
+    /// length order, then in order of first occurrence). Windows are grouped by a rolling hash and
+    /// compared byte for byte, so no strings are built.</summary>
     public static List<byte[]> ChooseWords(byte[] blob, int n = 6, int maxLen = 31)
     {
-        var work = blob.Select(b => (int)b).ToArray();
+        int len0 = blob.Length;
+        var work = new int[len0];
+        for (int i = 0; i < len0; i++) work[i] = blob[i];
+        var cost = new int[len0];
         var words = new List<byte[]>();
+        // valid[p] = run of 7-bit unmasked bytes starting at p
+        var run = new int[len0 + 1];
+        var buckets = new Dictionary<ulong, int>();
+        var firstPos = new List<int>();
+        var cnt = new List<int>();
+        var last = new List<int>();
+        var nextInBucket = new List<int>();
         for (int round = 0; round < n; round++)
         {
+            for (int p = len0 - 1; p >= 0; p--) run[p] = work[p] >= 0 && work[p] < 0x80 ? run[p + 1] + 1 : 0;
+            for (int i = 0; i < len0; i++) cost[i] = work[i] >= 0 ? CharBits(work[i]) ?? 9 : 0;
             byte[]? best = null;
             int bestGain = 0;
-            for (int len = 2; len <= maxLen; len++)
+            for (int L = 2; L <= maxLen && L <= len0; L++)
             {
-                var order = new List<string>();
-                var seen = new Dictionary<string, (int cnt, int last)>();
-                for (int p = 0; p + len <= work.Length; p++)
+                buckets.Clear(); firstPos.Clear(); cnt.Clear(); last.Clear(); nextInBucket.Clear();
+                const ulong B = 1099511628211UL;
+                ulong pw = 1;
+                for (int j = 0; j < L; j++) pw *= B;
+                ulong h = 0;
+                for (int p = 0; p + L <= len0; p++)
                 {
-                    bool skip = false;
-                    for (int j = 0; j < len; j++)
+                    if (p == 0) { h = 0; for (int j = 0; j < L; j++) h = h * B + (ulong)(work[j] + 2); }
+                    else h = h * B + (ulong)(work[p + L - 1] + 2) - pw * (ulong)(work[p - 1] + 2);
+                    if (run[p] < L) continue;
+                    int e = -1;
+                    if (buckets.TryGetValue(h, out int head))
+                        for (int c = head; c >= 0; c = nextInBucket[c])
+                            if (Same(work, firstPos[c], p, L)) { e = c; break; }
+                    if (e < 0)
                     {
-                        int x = work[p + j];
-                        if (x < 0 || x >= 0x80) { skip = true; break; }
+                        e = firstPos.Count;
+                        firstPos.Add(p); cnt.Add(0); last.Add(-L);
+                        nextInBucket.Add(buckets.TryGetValue(h, out int hd) ? hd : -1);
+                        buckets[h] = e;
                     }
-                    if (skip) continue;
-                    var key = string.Create(len, (work, p), (span, st) =>
-                    {
-                        for (int j = 0; j < span.Length; j++) span[j] = (char)st.work[st.p + j];
-                    });
-                    if (!seen.TryGetValue(key, out var stt)) { stt = (0, -len); order.Add(key); }
-                    if (p >= stt.last + len) stt = (stt.cnt + 1, p);
-                    seen[key] = stt;
+                    if (p >= last[e] + L) { cnt[e]++; last[e] = p; }
                 }
-                foreach (var key in order)
+                for (int e = 0; e < firstPos.Count; e++)             // insertion order = first occurrence
                 {
-                    var (cnt, _) = seen[key];
-                    if (cnt < 2) continue;
-                    int bits = 0;
-                    foreach (char ch in key) bits += CharBits(ch) ?? 9;
-                    int gain = cnt * (bits - 9) - (5 + 7 * len);
-                    if (gain > bestGain) { best = key.Select(c => (byte)c).ToArray(); bestGain = gain; }
+                    if (cnt[e] < 2) continue;
+                    int bits = 0, f = firstPos[e];
+                    for (int j = 0; j < L; j++) bits += cost[f + j];
+                    int gain = cnt[e] * (bits - 9) - (5 + 7 * L);
+                    if (gain > bestGain)
+                    {
+                        bestGain = gain;
+                        best = new byte[L];
+                        for (int j = 0; j < L; j++) best[j] = (byte)work[f + j];
+                    }
                 }
             }
             if (best == null) break;
@@ -446,6 +472,12 @@ public sealed class Encoder00
             }
         }
         return words;
+    }
+
+    static bool Same(int[] w, int a, int b, int L)
+    {
+        for (int j = 0; j < L; j++) if (w[a + j] != w[b + j]) return false;
+        return true;
     }
 
     public static void EncText(BitWriter bw, byte[] dst, int start, int end, int ptrbits, List<byte[]>? words)
@@ -498,7 +530,63 @@ public sealed class Encoder00
     }
 
     /// <summary>Re-encode a decoded type 0x00 block to CF=1 raw bytes (header included).</summary>
-    public static byte[] Encode(byte[] decoded, IReadOnlyDictionary<int, int> table, int dbrel, int subrel, int sector)
+    public static byte[] Encode(byte[] decoded, IReadOnlyDictionary<int, int> table, int dbrel, int subrel, int sector) =>
+        EncodeParts(decoded, table, dbrel, subrel, sector).Joined;
+
+    /// <summary>An encoding split into its byte-copied head (prolog, widths, raw sections 3/9/10/12) and
+    /// its bit stream, with where the S6 neighbour BLOCK_IDs sit in the stream. Block IDs only occur in
+    /// fixed-width places (the head and those 32-bit fields), so a tile whose IDs change can be re-encoded
+    /// by rebuilding the head (Head) and patching the stream (PatchIds) instead of encoding again.</summary>
+    public sealed record Parts(byte[] Head, byte[] Bits, long[] S6IdBits)
+    {
+        public byte[] Joined => [.. Head, .. Bits];
+    }
+
+    /// <summary>The head of an encoding of `decoded` (cheap: byte copies only).</summary>
+    public static byte[] Head(byte[] decoded, IReadOnlyDictionary<int, int> table, int sector)
+    {
+        int prologLen = table[T.Prolog];
+        var head = new List<byte>(prologLen + 512);
+        var prolog = decoded.AsSpan(0, prologLen).ToArray();
+        prolog[6] = 1;
+        prolog[7] = (byte)(decoded.Length / sector);
+        head.AddRange(prolog);
+        head.Add(decoded[6]); head.Add(decoded[7]);
+        int b = table[T.DescBase];
+        foreach (var (idx, key, plus1) in ((int, int, bool)[])[(3, T.RecS3, true), (9, T.RecS9, false), (10, T.RecS10, false), (12, T.RecS12, false)])
+        {
+            int off = BinaryPrimitives.ReadUInt16BigEndian(decoded.AsSpan(b + 4 * idx));
+            int count = BinaryPrimitives.ReadUInt16BigEndian(decoded.AsSpan(b + 4 * idx + 2));
+            if (idx == 12 && count == 0) continue;
+            int n = count * table[key] + (plus1 ? table[key] : 0);
+            head.AddRange(decoded.AsSpan(off, n).ToArray());
+        }
+        return head.ToArray();
+    }
+
+    /// <summary>Write the S6 neighbour BLOCK_IDs of `decoded` into a copy of the bit stream.</summary>
+    public static byte[] PatchIds(Parts p, byte[] decoded, IReadOnlyDictionary<int, int> table)
+    {
+        var bits = (byte[])p.Bits.Clone();
+        int b = table[T.DescBase];
+        int off6 = BinaryPrimitives.ReadUInt16BigEndian(decoded.AsSpan(b + 24));
+        int rec6 = table[T.RecS6], o5 = table[T.RecS5];
+        for (int k = 0; k < p.S6IdBits.Length; k++)
+        {
+            uint id = BinaryPrimitives.ReadUInt32BigEndian(decoded.AsSpan(off6 + k * rec6 + o5));
+            long pos = p.S6IdBits[k];
+            for (int i = 0; i < 32; i++)
+            {
+                long bit = pos + i;
+                int byteIdx = (int)(bit >> 3), sh = 7 - (int)(bit & 7);
+                if (((id >> (31 - i)) & 1) != 0) bits[byteIdx] |= (byte)(1 << sh);
+                else bits[byteIdx] &= (byte)~(1 << sh);
+            }
+        }
+        return bits;
+    }
+
+    public static Parts EncodeParts(byte[] decoded, IReadOnlyDictionary<int, int> table, int dbrel, int subrel, int sector)
     {
         if (decoded.Length % sector != 0) throw new Cf1Exception("decoded length is not a whole number of sectors");
         var x = new Encoder00(decoded, table, dbrel, subrel);
@@ -542,7 +630,6 @@ public sealed class Encoder00
             x.bw.Put(1, 0);
         }
         if (dbrel >= 0x1B) throw new Cf1Exception("DB-REL >= 27 (pass 0x1B) is not ported");
-        head.AddRange(x.bw.ToArray());
-        return head.ToArray();
+        return new Parts(head.ToArray(), x.bw.ToArray(), x.s6IdBits.ToArray());
     }
 }

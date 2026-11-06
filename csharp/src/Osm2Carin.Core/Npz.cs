@@ -26,7 +26,7 @@ public static partial class Npz
             string h = $"{{'descr': '{Descr(a)}', 'fortran_order': False, 'shape': ({a.Length},), }}";
             int total = 10 + h.Length + 1;
             h += new string(' ', (64 - total % 64) % 64) + "\n";
-            s.Write("\x93NUMPY"u8);
+            s.Write([0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y']);   // not a u8 literal: U+0093 is two bytes in UTF-8
             s.WriteByte(1); s.WriteByte(0);
             s.Write(BitConverter.GetBytes((ushort)h.Length));
             s.Write(Encoding.ASCII.GetBytes(h));

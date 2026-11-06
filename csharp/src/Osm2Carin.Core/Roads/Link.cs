@@ -136,32 +136,35 @@ public static class Link
         }
     }
 
-    static (byte[] raw, bool packed, byte[] plain) Encode(TileSpec sp, bool cf1)
-    {
-        var t = sp.Tile;
-        BinaryPrimitives.WriteUInt32BigEndian(t.Head, sp.BlockId);
-        t.Head[4] = (byte)(sp.BType >> 8); t.Head[5] = (byte)sp.BType;
-        t.Head[6] = t.Head[7] = 0;
-        int units = (t.DecodedSize() + Fmt.Unit - 1) / Fmt.Unit;
-        var plain = t.Build(Fmt.Unit, units);
-        int used = plain.Length;
-        while (used > 0 && plain[used - 1] == 0) used--;
-        var plainRaw = used > 0 ? plain[..used] : plain[..8];
-        if (sp.BType != 0 || !cf1) return (plainRaw, false, plain);
-        var packed = Encoder00.Encode(plain, Fmt.RecordSizeTable, Fmt.DbRel, Fmt.SubRel, Fmt.Unit);
-        return packed.Length < used ? (packed, true, plain) : (plain[..used], false, plain);
-    }
-
-    /// <summary>Allocate block IDs from baseUnit and finalise every tile (link.py link).</summary>
+    /// <summary>Allocate block IDs from baseUnit and finalise every tile (link.py link).
+    /// Each street tile is CF=1-encoded once, with provisional IDs: block IDs only occur in fixed-width
+    /// places of the encoding, so after allocation the head is rebuilt from the final tile and the S6
+    /// neighbour IDs are patched into the bit stream (Encoder00.Parts). The result equals a fresh
+    /// encoding of the final tile (the parity test against the Python tools checks this).</summary>
     public static List<TileSpec> Run(RoadTiles rt, int baseUnit = 0, bool cf1 = true, Action<string>? log = null, int maxRounds = 6)
     {
         log ??= Console.WriteLine;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         Prepare(rt);
+        log($"link: prepared in {sw.Elapsed.TotalSeconds:F1} s");
         var specs = Order.SelectMany(lv => rt.Levels[lv]).ToList();
         foreach (var sp in specs) sp.BlockId = 0x00FFFF01;
         foreach (var sp in specs) Fill(sp);
         var units = new int[specs.Count];
-        Parallel.For(0, specs.Count, i => units[i] = Math.Max(1, (Encode(specs[i], cf1).raw.Length + Fmt.Unit - 1) / Fmt.Unit));
+        var parts = new Encoder00.Parts?[specs.Count];
+        Parallel.For(0, specs.Count, i =>
+        {
+            var sp = specs[i];
+            var plain = PlainOf(sp, out int used);
+            int len = used;
+            if (sp.BType == 0 && cf1)
+            {
+                var p = Encoder00.EncodeParts(plain, Fmt.RecordSizeTable, Fmt.DbRel, Fmt.SubRel, Fmt.Unit);
+                if (p.Head.Length + p.Bits.Length < used) { parts[i] = p; len = p.Head.Length + p.Bits.Length; }
+            }
+            units[i] = Math.Max(1, (Math.Max(len, 8) + Fmt.Unit - 1) / Fmt.Unit);
+        });
+        log($"link: encoded in {sw.Elapsed.TotalSeconds:F1} s");
         for (int rnd = 0; rnd < maxRounds; rnd++)
         {
             int pos = baseUnit;
@@ -176,17 +179,40 @@ public static class Link
             Parallel.For(0, specs.Count, i =>
             {
                 var sp = specs[i];
-                var (raw, packed, plain) = Encode(sp, cf1);
+                var plain = PlainOf(sp, out int used);
+                byte[] raw;
+                if (parts[i] is Encoder00.Parts p)
+                {
+                    var head = Encoder00.Head(plain, Fmt.RecordSizeTable, Fmt.Unit);
+                    raw = [.. head, .. Encoder00.PatchIds(p, plain, Fmt.RecordSizeTable)];
+                    if (head.Length != p.Head.Length)            // cannot happen: re-encode to be safe
+                        raw = Encoder00.Encode(plain, Fmt.RecordSizeTable, Fmt.DbRel, Fmt.SubRel, Fmt.Unit);
+                    sp.Cf1 = true;
+                }
+                else { raw = used > 0 ? plain[..used] : plain[..8]; sp.Cf1 = false; }
                 int n = Math.Max(1, (raw.Length + Fmt.Unit - 1) / Fmt.Unit);
                 if (n > units[i]) { units[i] = n; Interlocked.Increment(ref grown); }
-                sp.Cf1 = packed; sp.Decoded = plain;
+                sp.Decoded = plain;
                 var o = new byte[units[i] * Fmt.Unit];
                 raw.CopyTo(o, 0);
                 sp.Raw = o;
             });
-            log($"link round {rnd + 1}: {specs.Count:N0} tiles, {pos - baseUnit:N0} units, {grown} grew");
+            log($"link round {rnd + 1}: {specs.Count:N0} tiles, {pos - baseUnit:N0} units, {grown} grew  [{sw.Elapsed.TotalSeconds:F1} s]");
             if (grown == 0) { rt.EndUnit = pos; return specs; }
         }
         throw new InvalidOperationException("block allocation did not settle");
+    }
+
+    static byte[] PlainOf(TileSpec sp, out int used)
+    {
+        var t = sp.Tile;
+        BinaryPrimitives.WriteUInt32BigEndian(t.Head, sp.BlockId);
+        t.Head[4] = (byte)(sp.BType >> 8); t.Head[5] = (byte)sp.BType;
+        t.Head[6] = t.Head[7] = 0;
+        int units = (t.DecodedSize() + Fmt.Unit - 1) / Fmt.Unit;
+        var plain = t.Build(Fmt.Unit, units);
+        used = plain.Length;
+        while (used > 0 && plain[used - 1] == 0) used--;
+        return plain;
     }
 }

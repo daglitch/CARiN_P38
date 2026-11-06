@@ -463,6 +463,8 @@ public static partial class Tiles
     public static RoadTiles Build(RoadModel m, List<string> strings, string regionLabel = "", Action<string>? log = null)
     {
         log ??= Console.WriteLine;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        string T() => $"  [{sw.Elapsed.TotalSeconds:F1} s]";
         var nxQ = m.Get<int>("node_x").Select(v => Quant(v)).ToArray();
         var nyQ = m.Get<int>("node_y").Select(v => Quant(v)).ToArray();
         var sxQ = m.Get<int>("shape_x").Select(v => Quant(v)).ToArray();
@@ -478,7 +480,7 @@ public static partial class Tiles
         var root = RootCell((long)xs.Min(), (long)ys.Min(), (long)xs.Max() + 1, (long)ys.Max() + 1);
         var leaves = new List<Cell>();
         GrowStreet(root, xs, ys, wts, leaves);
-        log($"street tiles: {leaves.Count:N0} (root {root.W:N0} units)");
+        log($"street tiles: {leaves.Count:N0} (root {root.W:N0} units){T()}");
 
         var nodeXy = new (long x, long y)[nxQ.Length];
         Parallel.For(0, nxQ.Length, i => nodeXy[i] = Nudge(root, nxQ[i], nyQ[i]));
@@ -527,7 +529,7 @@ public static partial class Tiles
                 pieces.Add(p);
             }
         }
-        log($"street pieces: {pieces.Count:N0} from {nLinks:N0} links, edge nodes {edges.Count:N0}");
+        log($"street pieces: {pieces.Count:N0} from {nLinks:N0} links, edge nodes {edges.Count:N0}{T()}");
 
         // coarse levels
         var rt = new RoadTiles();
@@ -561,13 +563,14 @@ public static partial class Tiles
                 foreach (var end in new[] { p.Pts[0], p.Pts[^1] })
                     reach[end] = Math.Max(reach.GetValueOrDefault(end), 4 - lv);
             coarse[lv] = (croot, cleaves, cpieces, cedges);
-            log($"level 0x0{lv}: {keep.Count(k => k):N0} street links -> {ch.Count:N0} chains -> {cpieces.Count:N0} pieces in {cleaves.Count:N0} tiles");
+            log($"level 0x0{lv}: {keep.Count(k => k):N0} street links -> {ch.Count:N0} chains -> {cpieces.Count:N0} pieces in {cleaves.Count:N0} tiles{T()}");
         }
 
         rt.Roots[0] = root; rt.Cells[0] = leaves;
         var fits = new System.Text.Json.Nodes.JsonObject();
         var (l0, fit0) = MakeTiles(0, leaves, pieces, edges, reach, strings, regionLabel, m);
         rt.Levels[0] = l0;
+        log($"street tiles written{T()}");
         if (fit0.Count > 0) fits["0x00"] = fit0;
         foreach (int lv in (int[])[3, 2, 1])
         {
@@ -577,6 +580,7 @@ public static partial class Tiles
             rt.Levels[lv] = lt;
             if (fit.Count > 0) fits[$"0x0{lv}"] = fit;
         }
+        log($"coarse tiles written{T()}");
         var co = new System.Text.Json.Nodes.JsonObject();
         foreach (int lv in (int[])[3, 2, 1])
             co[$"0x0{lv}"] = new System.Text.Json.Nodes.JsonObject { ["tiles"] = coarse[lv].leaves.Count, ["links"] = coarse[lv].pieces.Count, ["edge_nodes"] = coarse[lv].edges.Count };

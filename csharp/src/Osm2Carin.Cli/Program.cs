@@ -117,9 +117,9 @@ public static class Program
     static void PrintEstimate(JsonObject est, JsonObject cap, string profile, string title)
     {
         Console.WriteLine($"\n{title}");
-        Console.WriteLine($"  street links ~{est["links"]!.GetValue<long>():N0}, POIs ~{est["pois"]!.GetValue<long>():N0}");
-        Console.WriteLine($"  carindb ~{est["carindb_bytes"]!.GetValue<long>() / 1048576.0:N0} MiB (incl. {est["margin"]!.GetValue<double>() - 1:P0} margin), " +
-                          $"{cap["total_sectors"]!.GetValue<long>():N0} sectors = {Estimate.Percent(cap, "74 min")}% of a 74-min, {Estimate.Percent(cap, "80 min")}% of an 80-min CD-R");
+        Console.WriteLine($"  street links ~{JsonX.L(est["links"]):N0}, POIs ~{JsonX.L(est["pois"]):N0}");
+        Console.WriteLine($"  carindb ~{JsonX.L(est["carindb_bytes"]) / 1048576.0:N0} MiB (incl. {JsonX.D(est["margin"]) - 1:P0} margin), " +
+                          $"{JsonX.L(cap["total_sectors"]):N0} sectors = {Estimate.Percent(cap, "74 min")}% of a 74-min, {Estimate.Percent(cap, "80 min")}% of an 80-min CD-R");
         foreach (var l in Estimate.Advice(cap, profile)) Console.WriteLine("  " + l);
     }
 
@@ -138,7 +138,7 @@ public static class Program
         if (size == null) { Console.WriteLine("could not get the extract size; skipping the pre-download estimate"); return null; }
         Console.WriteLine($"{r.Id}: extract {size.Value / 1048576.0:N0} MiB");
         var est = Estimate.FromPbf(size.Value, a.Profile, !a.NoPoi);
-        var cap = Estimate.Capacity(est["carindb_bytes"]!.GetValue<long>());
+        var cap = Estimate.Capacity(JsonX.L(est["carindb_bytes"]));
         PrintEstimate(est, cap, a.Profile, "Estimate before download:");
         return (est, cap);
     }
@@ -154,8 +154,8 @@ public static class Program
         m.Stats["pbf_md5"] = md5;
         var d = Path.Combine(a.Out, Slug(r.Id));
         m.Save(Path.Combine(d, "model"));
-        var est = Estimate.FromModel(m.Stats["links"]!.GetValue<long>(), m.Stats["shape_points"]!.GetValue<long>(), m.Stats["pois"]!.GetValue<long>(), !a.NoPoi);
-        var cap = Estimate.Capacity(est["carindb_bytes"]!.GetValue<long>());
+        var est = Estimate.FromModel(JsonX.L(m.Stats["links"]), JsonX.L(m.Stats["shape_points"]), JsonX.L(m.Stats["pois"]), !a.NoPoi);
+        var cap = Estimate.Capacity(JsonX.L(est["carindb_bytes"]));
         est["capacity"] = cap;
         est["advice"] = new JsonArray(Estimate.Advice(cap, a.Profile).Select(x => (JsonNode?)x).ToArray());
         m.Stats["estimate"] = est;
@@ -174,8 +174,11 @@ public static class Program
             m = File.Exists(Path.Combine(d, "model.npz")) ? RoadModel.Load(Path.Combine(d, "model")) : RunModel(a, r).m;
         var sw = Stopwatch.StartNew();
         var rt = Tiles.Build(m, m.Strings, r.Label);
+        Console.WriteLine($"tiles built in {sw.Elapsed.TotalSeconds:F1} s");
         var specs = Link.Run(rt, 0, !a.Plain);
+        var tc = sw.Elapsed.TotalSeconds;
         var (res, problems) = Validate.Check(specs, !a.Plain, a.CheckEvery);
+        Console.WriteLine($"checked in {sw.Elapsed.TotalSeconds - tc:F1} s");
         var vstats = Validate.ExportViewer(specs, Path.Combine(d, "viewer"), Path.Combine(Repo(a), "viewer", "index.html"));
         using (var f = File.Create(Path.Combine(d, "roads.bin")))
             foreach (var sp in specs) f.Write(sp.Raw);

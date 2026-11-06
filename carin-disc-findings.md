@@ -260,6 +260,34 @@ Code: `tools/osm2carin/tile26.py` (DB-REL 26 tile model), `tiles.py` (OSM model 
 - S12 (6-byte entries on the disc, probably TMC) left empty;
 - no house numbers (`+0x54` = 0).
 
+### C# port (2026-11-05)
+`csharp/` holds the same pipeline in C#, with its own PBF reader and a port of OpenCarin's CF=1 type 0x00 codec. It produces the Python tools' output byte for byte:
+- the Nevada road model, in every array;
+- the Nevada road tiles, all 6,380 blocks, on disc and decoded.
+
+The checks against the original disc pass too:
+- the `.bin` rebuild;
+- the CF=1 codec, matching OpenCarin on 480 tiles and round-tripping all 24,028;
+- the tile model, round-tripping all 38,326 road tiles.
+
+Exact parity needed three things reproduced exactly: numpy's pairwise float sums, CPython's `math.hypot` (Douglas-Peucker near-ties), and Python's floor-modulo and rounding. Nevada:
+
+| Step | Python | C# |
+|---|---|---|
+| Road model | 55 s | 7 s |
+| Tiles + link + checks | ~25 min | 18 s |
+
+Each street tile is CF=1-encoded once: block IDs only sit in fixed-width fields, so they are patched in after allocation.
+
+**California in C#** (1.27 GB extract):
+- road model in 46 s: 4,011,475 links, 299,219 POIs;
+- road tiles in 95 s: **49,366 blocks, 97,716 units (190.9 MiB)**, every check passing;
+- the fullest tiles dropped 79,789 class-6, 3,429 class-5 and 1,325 class-4 pieces (0.03% of links).
+
+Python would take an estimated 3–4 hours for the tiles.
+
+Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at 0. The encoder then writes every link length and coordinate delta as a 16-bit escape. Choosing the widths per tile, as the disc does, would shrink the street tiles noticeably. Not done yet, so that both implementations stay identical.
+
 ### POI categories (2026-11-05, OpenCarin issue #24)
 Block 0x07 section 0 is the list of POI category codes on the disc (6 B records: code, name offset, 0; every name is empty, so the unit uses its own names). On CD-ID 5944 it holds **39 codes**, and the 0x06 POI records (20 B, `T[0x32]`, `+0x0A` category) use exactly those 39 (249,000 records).
 

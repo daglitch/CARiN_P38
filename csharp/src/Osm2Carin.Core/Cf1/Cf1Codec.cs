@@ -77,6 +77,9 @@ public sealed class BitWriter
     }
 
     public byte[] ToArray() => buf.ToArray();
+
+    /// <summary>Bits written so far.</summary>
+    public long Position => pos;
 }
 
 public readonly record struct Entry(int Off, int Count);
