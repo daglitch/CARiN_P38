@@ -8,7 +8,12 @@ Status 2026-11-06:
   - the old cities, streets, POIs and TMC keep pointing at the old roads, which stay on the disc. So nothing is neutralised yet.
 
   Car test pending.
-- **Not started:** 3b, 3c, 3d.
+- **3b and 3c done offline, with the Phase 4 pack** (2026-11-06, `osm2carin disc`, `Dest/*.cs`, `phase3c-car-test.md`):
+  - OSM cities, the street directory and tries, and POIs with their index and map tiles;
+  - packed into the original carindb's freed space.
+
+  Car test pending.
+- **Not started:** 3d (house numbers, signposts), brands, country-wide POI name search.
 
 ## Approach: graft onto the original database
 

@@ -102,11 +102,12 @@ public sealed class Cities
     /// <summary>A bucket grid over points (carin units), cell ~0.1 degree.</summary>
     public sealed class Grid
     {
-        const long Cell = 555_556;
+        readonly long Cell;
         readonly Dictionary<(long, long), List<int>> cells = new();
 
-        public Grid(List<(int x, int y)> pts)
+        public Grid(List<(int x, int y)> pts, long cell = 555_556)
         {
+            Cell = cell;
             for (int i = 0; i < pts.Count; i++)
             {
                 var k = (Geo.FloorDiv(pts[i].x, Cell), Geo.FloorDiv(pts[i].y, Cell));

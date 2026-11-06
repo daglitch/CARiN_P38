@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Osm2Carin.Core;
 using Osm2Carin.Core.Osm;
 using Osm2Carin.Core.Roads;
+using Dest = Osm2Carin.Core.Dest;
 
 namespace Osm2Carin.Cli;
 
@@ -23,8 +24,8 @@ public static class Program
                              region:highways adds only its motorways and trunk roads, region:major also
                              its primary roads (us/california,us/nevada,us:highways)
           osm2carin disc     --region us/california [--orig <dir>]
-                                                       Phase 3a: our road layers grafted onto the original
-                                                       disc -> out/<region>/disc/<region>-3a.bin/.cue
+                                                       our roads, cities, streets and POIs on the original
+                                                       disc -> out/<region>/disc/<region>-3c.bin/.cue
           osm2carin cd-split <orig.bin> <dir>             raw image -> track1.iso + audio.raw
           osm2carin cd-build <track1.iso> <out.bin> [--audio audio.raw]
           osm2carin cd-verify <image.bin>                 EDC/ECC of every data sector
@@ -183,17 +184,18 @@ public static class Program
 
     static int CmdModel(Args a) { RunModel(a, Region(a)); return 0; }
 
-    static int RunTiles(Args a, Regions.Region r, RoadModel? m = null) => RunTiles(a, r, m, 0, out _, out _);
+    static int RunTiles(Args a, Regions.Region r, RoadModel? m = null) => RunTiles(a, r, m, UnitAllocator.From(0), null, out _, out _);
 
-    static int RunTiles(Args a, Regions.Region r, RoadModel? m, int baseUnit, out RoadTiles rt, out List<TileSpec> specs)
+    static int RunTiles(Args a, Regions.Region r, RoadModel? m, UnitAllocator alloc, string?[]? linkCity, out RoadTiles rt, out List<TileSpec> specs)
     {
+        int baseUnit = alloc.Pos;
         var d = Path.Combine(a.Out, Slug(r.Id));
         if (m == null)
             m = File.Exists(Path.Combine(d, "model.npz")) ? RoadModel.Load(Path.Combine(d, "model")) : RunModel(a, r).m;
         var sw = Stopwatch.StartNew();
-        rt = Tiles.Build(m, m.Strings, r.Label);
+        rt = Tiles.Build(m, m.Strings, r.Label, null, linkCity);
         Console.WriteLine($"tiles built in {sw.Elapsed.TotalSeconds:F1} s");
-        specs = Link.Run(rt, baseUnit, !a.Plain, withIndex: true);
+        specs = Link.Run(rt, alloc, !a.Plain, withIndex: true);
         var tc = sw.Elapsed.TotalSeconds;
         var (res, problems) = Validate.Check(specs, !a.Plain, a.CheckEvery);
         Validate.CheckIndex(rt, res, problems);
@@ -210,13 +212,13 @@ public static class Program
                 ["decoded_bytes"] = g.Sum(sp => (long)sp.Decoded.Length),
             };
         var tiles = JsonNode.Parse(rt.Stats.ToJsonString())!.AsObject();
-        tiles["blocks"] = by; tiles["units"] = rt.EndUnit - baseUnit; tiles["base_unit"] = baseUnit; tiles["seconds"] = Math.Round(sw.Elapsed.TotalSeconds, 1);
+        tiles["blocks"] = by; tiles["units"] = rt.Blocks.Sum(b => b.Length / 2048); tiles["base_unit"] = baseUnit; tiles["seconds"] = Math.Round(sw.Elapsed.TotalSeconds, 1);
         tiles["checks"] = res; tiles["problems"] = problems; tiles["viewer"] = vstats;
         tiles["checked_every"] = a.CheckEvery;
         var stats = JsonNode.Parse(m.Stats.ToJsonString())!.AsObject();
         stats["tiles"] = tiles;
         var rp = Report.Write(stats, d);
-        int units = rt.EndUnit - baseUnit;
+        int units = rt.Blocks.Sum(b => b.Length / 2048);
         Console.WriteLine($"road tiles: {specs.Count:N0} blocks, {units:N0} units ({units * 2048 / 1048576.0:N1} MiB) in {sw.Elapsed.TotalSeconds:F1} s");
         foreach (var (k, v) in by) Console.WriteLine($"  {k}: {v!["blocks"]} blocks, {v["units"]} units, {v["cf1"]} CF=1");
         bool bad = Validate.HasProblems(res, problems);
@@ -249,7 +251,8 @@ public static class Program
         return rc != 0 ? rc : 2;
     }
 
-    /// <summary>Phase 3a: our road layers appended to the original carindb, 0x07 repointed, ISO grown, .bin/.cue.</summary>
+    /// <summary>Phases 3b/3c/4: our roads, cities, streets and POIs packed into the original disc's
+    /// carindb (Dest.Pack), then the .bin/.cue.</summary>
     static int CmdDisc(Args a)
     {
         var r = Region(a);
@@ -259,35 +262,46 @@ public static class Program
             throw new KeyNotFoundException($"{isoIn} not found: run `osm2carin cd-split <original .bin> {orig}` first");
         var runTime = Stopwatch.StartNew();
         var d = Path.Combine(a.Out, Slug(r.Id));
-        bool haveModel = File.Exists(Path.Combine(d, "model.npz"));
-        int nStages = haveModel ? 4 : 5, stage = 0;
+        bool haveModel = File.Exists(Path.Combine(d, "model.npz")) && File.Exists(Path.Combine(d, "model.places.json"));
+        int nStages = haveModel ? 6 : 7, stage = 0;
         Progress.Stage(++stage, nStages, "Original disc");
         var iso = Graft.Open(isoIn);
-        int baseUnit = Graft.BaseUnit(iso);
-        Console.WriteLine($"original: carindb at LBA {iso.CarindbLba}, {baseUnit:N0} units; our layers start there");
-        RoadModel? m = null;
+        var original = iso.Bytes.AsSpan((int)((long)iso.CarindbLba * 2048), iso.CarindbSize).ToArray();
+        var free = Dest.Pack.FreeRanges(original);
+        Console.WriteLine($"original: carindb at LBA {iso.CarindbLba}, {original.Length / 2048:N0} units; free for our data: units {free[0].start:N0}-{free[0].end:N0}, then from {free[1].start:N0}");
+        RoadModel m;
         if (haveModel) m = RoadModel.Load(Path.Combine(d, "model"));
         else { Progress.Stage(++stage, nStages, $"Road model from OSM ({string.Join(", ", r.Extracts.Select(x => x.Id))})"); m = RunModel(a, r).m; }
+        Progress.Stage(++stage, nStages, "Cities");
+        var cities = Dest.Cities.Build(m, Console.WriteLine);
         Progress.Stage(++stage, nStages, "Road tiles, spatial index and tile checks");
-        int rc = RunTiles(a, r, m, baseUnit, out var rt, out var specs);
+        var alloc = new UnitAllocator(free);
+        int rc = RunTiles(a, r, m, alloc, cities.LinkCityNames(), out var rt, out var specs);
         if (rc != 0 && !a.Force) { Console.WriteLine("road tile checks failed; not building a disc (--force to build anyway)"); return rc; }
 
-        Progress.Stage(++stage, nStages, "Graft onto the original carindb and check it");
-        var (newIso, db, rep) = Graft.Build(iso, rt);
-        var original = iso.Bytes.AsSpan((int)((long)iso.CarindbLba * 2048), iso.CarindbSize).ToArray();
-        var (res, problems) = Graft.Check(db, original, rt, specs);
-        rep["checks"] = res;
-        rep["problems"] = new JsonArray(problems.Select(p => (JsonNode?)p).ToArray());
+        Progress.Stage(++stage, nStages, "Streets, POIs and cities; pack and check");
+        var dir = new Dest.Directory();
+        dir.PlanStreets(m, cities, rt.Levels[0], Console.WriteLine);
+        dir.PlanPois(m, cities, rt.Levels[0], Console.WriteLine);
+        dir.PlanCities(Console.WriteLine);
+        var packed = Dest.Pack.Build(original, rt, dir, alloc, Console.WriteLine);
+        var (res, problems) = Dest.Pack.Check(packed.Db, rt, dir);
+        var rep = new JsonObject
+        {
+            ["region"] = r.Id, ["pack"] = packed.Report, ["directory"] = JsonNode.Parse(dir.Stats.ToJsonString()),
+            ["checks"] = res, ["problems"] = new JsonArray(problems.Select(p => (JsonNode?)p).ToArray()),
+        };
 
-        var outDir = Path.Combine(d, "disc");
-        Directory.CreateDirectory(outDir);
-        string name = Slug(r.Id) + "-3a";
-        Directory.CreateDirectory(Path.Combine(outDir, "work"));        // the ISO is a working file: burn the .cue
-        string isoOut = Path.Combine(outDir, "work", name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
         Progress.Stage(++stage, nStages, "Write and verify the .bin/.cue");
+        var (newIso, vds) = Graft.WriteIso(iso, packed.Db);
+        var outDir = Path.Combine(d, "disc");
+        Directory.CreateDirectory(Path.Combine(outDir, "work"));        // the ISO is a working file: burn the .cue
+        string name = Slug(r.Id) + "-3c";
+        string isoOut = Path.Combine(outDir, "work", name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
         File.WriteAllBytes(isoOut, newIso);
         int t1 = CdImage.Build(isoOut, bin, File.Exists(audio) ? audio : null);
         var v = CdImage.Verify(bin);
+        rep["iso_volume_descriptors"] = vds;
         rep["track1_sectors"] = t1;
         rep["edc_ecc"] = new JsonObject { ["form1_ok"] = v.Form1Ok, ["form1_bad"] = v.Form1Bad, ["form2_ok"] = v.Form2Ok, ["form2_bad"] = v.Form2Bad };
         long binBytes = new FileInfo(bin).Length;
@@ -297,13 +311,12 @@ public static class Program
         rep["fits_80_min"] = total <= 80 * 60 * 75;
         File.WriteAllText(Path.Combine(outDir, "disc-report.json"), rep.ToJsonString(new() { WriteIndented = true }));
 
-        Console.WriteLine($"0x07: {string.Join(", ", rep["directory_records"]!.AsArray().Select(x => $"record {x!["record"]} -> {x["new"]}"))}");
         foreach (var (k, val) in res) Console.WriteLine($"  {k}: {val}");
         Console.WriteLine($"EDC/ECC: Form 1 {v.Form1Ok:N0} ok / {v.Form1Bad} bad, Form 2 {v.Form2Ok} ok / {v.Form2Bad} bad");
         Console.WriteLine($"disc: {total:N0} sectors ({total / 4500.0:F1} min); fits a 74-min CD-R: {total <= 74 * 60 * 75}, 80-min: {total <= 80 * 60 * 75}");
         Console.WriteLine($"wrote {bin} and .cue; report {Path.Combine(outDir, "disc-report.json")}");
         bool bad = problems.Count > 0 || v.Form1Bad + v.Form2Bad > 0 || !(bool)res["chain covers the file"]! || (long)res["tiles missed from 0x07"]! > 0;
-        Console.WriteLine(bad ? "PROBLEMS: " + string.Join("; ", problems) : "all disc checks passed");
+        Console.WriteLine(bad ? "PROBLEMS: " + string.Join("; ", problems.Take(10)) : "all disc checks passed");
         Console.WriteLine($"total time {(int)runTime.Elapsed.TotalMinutes}:{runTime.Elapsed.Seconds:00}");
         return bad ? 1 : 0;
     }

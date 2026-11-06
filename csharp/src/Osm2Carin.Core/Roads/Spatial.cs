@@ -20,7 +20,7 @@ public static class Spatial
 
     /// <summary>Grid cell side per road layer, as on the original disc (512² cells for the street
     /// layer over its root square, 128² / 64² / 32² for 0x03 / 0x02 / 0x01).</summary>
-    public static readonly Dictionary<int, long> CellSide = new() { [0] = 1310720, [3] = 5242880, [2] = 10485760, [1] = 20971520 };
+    public static readonly Dictionary<int, long> CellSide = new() { [0] = 1310720, [3] = 5242880, [2] = 10485760, [1] = 20971520, [6] = 2621440 };
 
     public sealed class CellNode
     {

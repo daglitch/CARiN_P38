@@ -106,7 +106,19 @@ public static class Graft
         }
         rep["directory_records"] = recs;
 
-        // ISO: old header area + new carindb; patch the sizes
+        var (outIso, vds) = WriteIso(iso, db);
+        int sectors = (int)(outIso.Length / 2048);
+        rep["volume_descriptors_patched"] = vds;
+        rep["carindb_units_before"] = baseUnit;
+        rep["carindb_units_after"] = db.Length / Fmt.Unit;
+        rep["iso_sectors"] = sectors;
+        return (outIso, db, rep);
+    }
+
+    /// <summary>The ISO with `db` as its carindb: the original header area, then db; the carindb
+    /// directory record's size and every volume descriptor's volume size patched.</summary>
+    public static (byte[] iso, JsonArray patched) WriteIso(Iso iso, byte[] db)
+    {
         var outIso = new byte[(long)iso.CarindbLba * 2048 + db.Length];
         Array.Copy(iso.Bytes, outIso, (long)iso.CarindbLba * 2048);
         db.CopyTo(outIso, (long)iso.CarindbLba * 2048);
@@ -126,11 +138,7 @@ public static class Graft
             if (t == 255) break;
             if (t == 1 || t == 2) { Both32(o + 80, sectors); vds.Add($"sector {s}, type {t}"); }
         }
-        rep["volume_descriptors_patched"] = vds;
-        rep["carindb_units_before"] = baseUnit;
-        rep["carindb_units_after"] = db.Length / Fmt.Unit;
-        rep["iso_sectors"] = sectors;
-        return (outIso, db, rep);
+        return (outIso, vds);
     }
 
     /// <summary>Offline checks on the grafted carindb, read back from its bytes alone.</summary>
