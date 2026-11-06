@@ -8,3 +8,7 @@ viewer/
 
 # Cloned OpenCarin (run-viewer.bat / Phase 0 tools)
 third_party/
+
+# C# build output
+csharp/**/bin/
+csharp/**/obj/
