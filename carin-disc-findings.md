@@ -358,7 +358,7 @@ Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at
   - it detects 2048-byte units, DB-REL 26 and sub-revision 8;
   - it walks the chain and decodes every one of our tiles;
   - its lookup from 0x07 finds every tile;
-  - Las Vegas and Reno resolve to our tiles on all four levels.
+  - its lookup finds San Jose, Los Angeles and San Francisco on our street tiles (California), and Las Vegas and Reno on all four levels (Nevada).
 - **Unverified until the car test:** our coarse layers' grids are finer than the original's. 0x01, 0x02 and 0x03 have 256² cells against the disc's 32² / 64² / 128², because their tile edges are finer (Phase 3 above). The format allows it, since the cell side is read from the 0x08 header, but no original disc does it.
 
 ### POI categories (2026-11-05, OpenCarin issue #24)
