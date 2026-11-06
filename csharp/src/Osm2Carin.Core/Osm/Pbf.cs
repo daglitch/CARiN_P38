@@ -66,7 +66,7 @@ public sealed class PbfBlock
 /// converted as libosmium does: (offset + granularity * v) / 100, truncated, in 1e-7 degrees.</summary>
 public static class Pbf
 {
-    public static IEnumerable<PbfBlock> Read(string path, PbfFilter filter, int window = 64)
+    public static IEnumerable<PbfBlock> Read(string path, PbfFilter filter, int window = 64, Progress? progress = null)
     {
         using var f = File.OpenRead(path);
         var batch = new List<(string type, byte[] blob)>(window);
@@ -93,6 +93,7 @@ public static class Pbf
                 f.ReadExactly(blob);
                 batch.Add((type, blob));
             }
+            progress?.Set(f.Position);
             if (batch.Count == 0) yield break;
             var outp = new PbfBlock?[batch.Count];
             Parallel.For(0, batch.Count, i =>

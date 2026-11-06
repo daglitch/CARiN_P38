@@ -148,7 +148,8 @@ public static class ModelBuilder
         int nHw = 0;
         var keys = new HashSet<string>(Poi.Keys) { "highway", "type" };
         foreach (var ex in extracts)
-        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Ways = true, Relations = true, Keys = keys }))
+        using (var prog = Progress.Bytes("ways " + System.IO.Path.GetFileName(ex.Path).Replace("-latest.osm.pbf", ""), new FileInfo(ex.Path).Length))
+        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Ways = true, Relations = true, Keys = keys }, progress: prog))
         {
             foreach (var o in blk.Items)
             {
@@ -225,7 +226,8 @@ public static class ModelBuilder
         var nids = new List<long>(); var nxs = new List<int>(); var nys = new List<int>();
         var pois = new List<PoiRec>();
         foreach (var ex in extracts)
-        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = ex.MajorOnly ? null : new HashSet<string>(Poi.Keys) }))
+        using (var prog = Progress.Bytes("nodes " + System.IO.Path.GetFileName(ex.Path).Replace("-latest.osm.pbf", ""), new FileInfo(ex.Path).Length))
+        foreach (var blk in Pbf.Read(ex.Path, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = ex.MajorOnly ? null : new HashSet<string>(Poi.Keys) }, progress: prog))
         {
             foreach (var n in blk.Nodes)
             {
