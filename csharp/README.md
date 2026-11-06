@@ -17,15 +17,18 @@ Or `dotnet run -c Release --project csharp/src/Osm2Carin.Cli -- <command>`. The 
 | `model --region R` | road graph + POIs, report, model-based estimate |
 | `tiles --region R` | road levels 0–3 as CARiN tiles, checked, plus viewer data |
 | `build --region R [--force] [--estimate-only]` | all of the above; stops when the estimate doesn't fit a CD-R unless `--force` |
+| `disc --region R [--orig <dir>]` | Phase 3a (C# only): road layers grafted onto the original disc, checked, then `out/<region>/disc/<region>-3a.bin/.cue` (burn the `.cue`; the ISO it was made from is in `disc/work/`). `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
 | `cd-split <bin> <dir>`, `cd-build <iso> <bin> [--audio a.raw]`, `cd-verify <bin>` | raw MODE2/2352 image tools |
 
 Options:
+- `--region R`: a Geofabrik region, or several separated by commas (`us/california,us/nevada`), built as one map. Their extracts overlap at the borders; each OSM way, relation and node is taken once.
 - `--out <dir>`: the default is `<repo>/out`.
 - `--profile default|full|compact`.
 - `--no-poi`.
 - `--refresh`: download again.
 - `--plain`: store street tiles uncompressed.
 - `--check-every N`: run the per-tile read-back checks on every Nth tile only. The default, 1, checks all tiles.
+- `--orig <dir>`: for `disc`, where `cd-split` put the original disc.
 
 ## Same output as the Python tools
 
@@ -39,6 +42,7 @@ The port follows the Python step for step. The tests check it byte for byte agai
 | `ModelTests` | the Nevada road model equals the Python one in every array and string |
 | `RoadTilesTests` | the Nevada road tiles (6,380 blocks) equal the Python ones, on disc and decoded |
 | `HypotTests` | CPython's `math.hypot`, ported bit for bit |
+| `GraftTests` | Nevada grafted onto the original disc: chain intact, only the 0x07 BLOCK_IDs changed, every reference of the right type, every tile found from 0x07, ISO sizes patched |
 
 To match Python exactly, the port reproduces three things from it:
 - numpy's pairwise float sums;
