@@ -19,6 +19,7 @@ public static class Program
           osm2carin model    --region us/nevada          road graph + POIs, report, model-based estimate
           osm2carin tiles    --region us/nevada          road levels 0-3 as CARiN tiles, checked, + viewer data
           osm2carin build    --region us/california [--force] [--estimate-only]
+                             --region us/california,us/nevada builds several regions as one map
           osm2carin disc     --region us/california [--orig <dir>]
                                                        Phase 3a: our road layers grafted onto the original
                                                        disc -> out/<region>/disc/<region>-3a.bin/.cue
@@ -111,13 +112,13 @@ public static class Program
 
     static int Help() { Console.WriteLine(Usage); return 2; }
 
-    static string Slug(string id) => id.Replace('/', '_');
+    static string Slug(string id) => id.Replace('/', '_');      // us/california+us/nevada -> us_california+us_nevada
     static string Cache(Args a) => Path.Combine(a.Out, "cache");
 
     static Regions.Region Region(Args a)
     {
         if (a.Region == null) throw new KeyNotFoundException("--region is required");
-        return Regions.Resolve(Regions.LoadIndex(Cache(a)), a.Region);
+        return Regions.ResolveAll(Regions.LoadIndex(Cache(a)), a.Region);
     }
 
     static void PrintEstimate(JsonObject est, JsonObject cap, string profile, string title)
@@ -140,7 +141,8 @@ public static class Program
 
     static (JsonObject est, JsonObject cap)? PreEstimate(Args a, Regions.Region r)
     {
-        var size = Regions.RemoteSize(r.PbfUrl);
+        var sizes = r.Extracts.Select(x => Regions.RemoteSize(x.PbfUrl)).ToList();
+        long? size = sizes.Any(x => x == null) ? null : sizes.Sum(x => x!.Value);
         if (size == null) { Console.WriteLine("could not get the extract size; skipping the pre-download estimate"); return null; }
         Console.WriteLine($"{r.Id}: extract {size.Value / 1048576.0:N0} MiB");
         var est = Estimate.FromPbf(size.Value, a.Profile, !a.NoPoi);
@@ -150,14 +152,14 @@ public static class Program
     }
 
     static int CmdEstimate(Args a) { PreEstimate(a, Region(a)); return 0; }
-    static int CmdDownload(Args a) { Regions.Fetch(Region(a), Cache(a), a.Refresh); return 0; }
+    static int CmdDownload(Args a) { foreach (var x in Region(a).Extracts) Regions.Fetch(x, Cache(a), a.Refresh); return 0; }
 
     static (RoadModel m, JsonObject cap) RunModel(Args a, Regions.Region r)
     {
-        var (pbf, md5) = Regions.Fetch(r, Cache(a), a.Refresh);
-        var m = ModelBuilder.Build(pbf, a.Profile);
+        var got = r.Extracts.Select(x => Regions.Fetch(x, Cache(a), a.Refresh)).ToList();
+        var m = ModelBuilder.Build(got.Select(g => g.path).ToList(), a.Profile);
         m.Stats["region"] = r.Id;
-        m.Stats["pbf_md5"] = md5;
+        m.Stats["pbf_md5"] = string.Join(",", got.Select(g => g.md5));
         var d = Path.Combine(a.Out, Slug(r.Id));
         m.Save(Path.Combine(d, "model"));
         var est = Estimate.FromModel(JsonX.L(m.Stats["links"]), JsonX.L(m.Stats["shape_points"]), JsonX.L(m.Stats["pois"]), !a.NoPoi);
@@ -264,7 +266,8 @@ public static class Program
         var outDir = Path.Combine(d, "disc");
         Directory.CreateDirectory(outDir);
         string name = Slug(r.Id) + "-3a";
-        string isoOut = Path.Combine(outDir, name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
+        Directory.CreateDirectory(Path.Combine(outDir, "work"));        // the ISO is a working file: burn the .cue
+        string isoOut = Path.Combine(outDir, "work", name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
         File.WriteAllBytes(isoOut, newIso);
         int t1 = CdImage.Build(isoOut, bin, File.Exists(audio) ? audio : null);
         var v = CdImage.Verify(bin);

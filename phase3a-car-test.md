@@ -4,24 +4,28 @@
 
 ## The images
 
-They are in `C:\Git\CARiN_P38\out\<region>\disc\` (git-ignored). Rebuild them with:
+They are in `C:\Git\CARiN_P38\out\<region>\disc\` (git-ignored). Each is a `.bin` + `.cue` pair in the same format as an ImgBurn rip of the original: one MODE2/2352 data track, then the original audio track. Burn the `.cue`. The `work\` subfolder holds the ISO the image was made from; it isn't needed for burning.
+
+Rebuild them with:
 
 ```
 osm2carin cd-split P38_Navigation_CD_2002_California_Nevada.bin out\phase0\orig
+osm2carin disc --region us/california,us/nevada
 osm2carin disc --region us/california
 osm2carin disc --region us/nevada
 ```
 
 | Image | Size | Sectors (incl. audio) | Fits |
 |---|---|---|---|
+| `us_california+us_nevada\disc\us_california+us_nevada-3a.cue/.bin` | 645 MiB | 287,658 (63.9 min) | 74- and 80-min CD-R |
 | `us_california\disc\us_california-3a.cue/.bin` | 619 MiB | 276,040 (61.3 min) | 74- and 80-min CD-R |
 | `us_nevada\disc\us_nevada-3a.cue/.bin` | 447 MiB | 199,638 (44.4 min) | 74- and 80-min CD-R |
 
-Burn **California** first. Nevada is a fallback if you can drive there, or if you want a second, smaller test.
+Burn **California + Nevada**: it covers both states, like the original disc. The single-state images are there in case you want a smaller disc.
 
 ## What is on the disc
 
-It is the original disc with the **road map replaced by OpenStreetMap** (California only, or Nevada only):
+It is the original disc with the **road map replaced by OpenStreetMap** (California and Nevada, or a single state):
 
 - **Our roads:** all four road levels, from the most detailed street level up to the motorway-only overview. They are the roads the unit draws, matches the car to and routes along.
 - **Kept from the original:** everything else, byte for byte. That includes:
@@ -30,7 +34,7 @@ It is the original disc with the **road map replaced by OpenStreetMap** (Califor
   - traffic (TMC) data.
 
   The original roads are also still on the disc, but nothing on the map leads to them any more. Only the old address and POI search still points at them.
-- **Elsewhere in the US:** no roads at all, because our data covers one state.
+- **Elsewhere in the US:** no roads at all, because our data covers only California and Nevada.
 
 What to expect:
 - **Picking a destination on the map** works on our roads. This is the main test.
@@ -43,7 +47,7 @@ As for Phase 0:
 2. The lowest speed (4x–8x), with **Verify** ticked.
 3. A good-quality CD-R.
 
-Label the disc "3a CA".
+Label the disc "3a CA+NV".
 
 ## In the car
 1. **Boot.** Insert the disc and switch on as usual. Does the unit load the map? Note any message ("wrong CD", "CD error"…), and how long it takes compared with the original.

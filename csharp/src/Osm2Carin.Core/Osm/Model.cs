@@ -98,8 +98,15 @@ public static class ModelBuilder
         return r;
     }
 
-    public static RoadModel Build(string pbf, string profile = "default", Action<string>? log = null)
+    public static RoadModel Build(string pbf, string profile = "default", Action<string>? log = null) => Build([pbf], profile, log);
+
+    /// <summary>One road model from several extracts (e.g. two neighbouring states). Geofabrik extracts
+    /// overlap at their borders: a way crossing it is in both, with all its nodes, so ways, relations
+    /// and nodes are taken once per OSM ID (first file wins). With one file nothing is dropped.</summary>
+    public static RoadModel Build(IReadOnlyList<string> pbfs, string profile = "default", Action<string>? log = null)
     {
+        bool multi = pbfs.Count > 1;
+        var seenWays = new HashSet<long>(); var seenRels = new HashSet<long>(); var seenPoiNodes = new HashSet<long>();
         log ??= Console.WriteLine;
         var sw = Stopwatch.StartNew();
         var prof = Attrs.Profiles[profile];
@@ -119,10 +126,12 @@ public static class ModelBuilder
         var restrictions = new List<(long rid, long fr, long via, long to, string kind)>();
         int nHw = 0;
         var keys = new HashSet<string>(Poi.Keys) { "highway", "type" };
+        foreach (var pbf in pbfs)
         foreach (var blk in Pbf.Read(pbf, new PbfFilter { Ways = true, Relations = true, Keys = keys }))
         {
             foreach (var o in blk.Items)
             {
+                if (multi && !(o is OsmRelation r0 ? seenRels.Add(r0.Id) : seenWays.Add(((OsmWay)o).Id))) continue;
                 if (o is OsmRelation rel)
                 {
                     if (rel.Tags.Get("type") != "restriction") continue;
@@ -193,6 +202,7 @@ public static class ModelBuilder
         Array.Sort(need);
         var nids = new List<long>(); var nxs = new List<int>(); var nys = new List<int>();
         var pois = new List<PoiRec>();
+        foreach (var pbf in pbfs)
         foreach (var blk in Pbf.Read(pbf, new PbfFilter { Nodes = true, NodeIds = need, NodeKeys = new HashSet<string>(Poi.Keys) }))
         {
             foreach (var n in blk.Nodes)
@@ -203,6 +213,7 @@ public static class ModelBuilder
                     nids.Add(n.Id); nxs.Add(x); nys.Add(y);
                 }
                 if (n.Tags == null) continue;
+                if (multi && !seenPoiNodes.Add(n.Id)) continue;
                 var pt = Poi.PoiTags(n.Tags);
                 if (pt != null && pt.Value.cat == null) drop.Add(PoiDropReason(pt.Value.value));
                 else if (pt != null && n.Valid)
@@ -214,6 +225,8 @@ public static class ModelBuilder
             }
         }
         var order = Enumerable.Range(0, nids.Count).OrderBy(i => nids[i]).ToArray();   // stable
+        if (multi)                                     // a node in two extracts: keep the first file's copy
+            order = order.Where((i, k) => k == 0 || nids[order[k - 1]] != nids[i]).ToArray();
         var ids = order.Select(i => nids[i]).ToArray();
         var X = order.Select(i => nxs[i]).ToArray();
         var Y = order.Select(i => nys[i]).ToArray();
@@ -382,7 +395,7 @@ public static class ModelBuilder
         m.Arrays.Add(("poi_is_way", pois.Select(p => p.Kind == 'w').ToArray()));
         m.Arrays.Add(("poi_code", pois.Select(p => (byte)Poi.CodeOf[S.Items[p.Cat]]).ToArray()));
 
-        m.Stats = MakeStats(pbf, profile, drop, L, lengthM, linkName, pois, S, gid.Length, SX.Length, nWays,
+        m.Stats = MakeStats(pbfs, profile, drop, L, lengthM, linkName, pois, S, gid.Length, SX.Length, nWays,
                             restrictions.Count, tr["from_link"].Length);
         m.Stats["seconds"] = Math.Round(sw.Elapsed.TotalSeconds, 1);
         return m;
@@ -417,7 +430,7 @@ public static class ModelBuilder
         return o.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
     }
 
-    static JsonObject MakeStats(string pbf, string profile, Dropped drop, Dictionary<string, byte[]> L, int[] lengthM, int[] linkName,
+    static JsonObject MakeStats(IReadOnlyList<string> pbfs, string profile, Dropped drop, Dictionary<string, byte[]> L, int[] lengthM, int[] linkName,
         List<PoiRec> pois, Strings S, int nNodes, int nShape, int nWays, int nRestr, int nMapped)
     {
         var cls = L["cls"];
@@ -446,7 +459,7 @@ public static class ModelBuilder
         foreach (var k in catOrder.OrderByDescending(k => poiCat[k])) cats[k] = poiCat[k];
         return new JsonObject
         {
-            ["pbf"] = Path.GetFullPath(pbf), ["pbf_bytes"] = new FileInfo(pbf).Length, ["profile"] = profile,
+            ["pbf"] = string.Join(",", pbfs.Select(Path.GetFullPath)), ["pbf_bytes"] = pbfs.Sum(p => new FileInfo(p).Length), ["profile"] = profile,
             ["dropped"] = drop.ToJson(),
             ["road_ways"] = nWays, ["links"] = cls.Length, ["graph_nodes"] = nNodes, ["shape_points"] = nShape,
             ["road_km"] = Math.Round(lengthM.Sum(x => (long)x) / 1000.0, 1),

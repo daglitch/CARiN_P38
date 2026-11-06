@@ -19,8 +19,11 @@ public static class Regions
         return c;
     }
 
-    public sealed record Region(string Id, string Name, string PbfUrl, string[] Codes)
+    public sealed record Region(string Id, string Name, string PbfUrl, string[] Codes, Region[]? Parts = null)
     {
+        /// <summary>The extracts this region is built from: itself, or the regions it combines.</summary>
+        public Region[] Extracts => Parts ?? [this];
+
         /// <summary>Display name ("Nevada" for us/nevada, whose index name is its id).</summary>
         public string Label => Name == Id
             ? string.Join(' ', Id.Split('/')[^1].Split('-').Select(w => w.Length > 0 ? char.ToUpperInvariant(w[0]) + w[1..] : w))
@@ -49,6 +52,17 @@ public static class Regions
             o[id] = new Region(id, p["name"]?.GetValue<string>() ?? id, pbf, codes);
         }
         return o;
+    }
+
+    /// <summary>"us/california,us/nevada": several regions built as one map (Id "us/california+us/nevada",
+    /// Name "California and Nevada"); a single query resolves as before.</summary>
+    public static Region ResolveAll(Dictionary<string, Region> index, string query)
+    {
+        var parts = query.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(q => Resolve(index, q)).DistinctBy(r => r.Id).ToArray();
+        if (parts.Length == 1) return parts[0];
+        return new Region(string.Join('+', parts.Select(r => r.Id)), string.Join(" and ", parts.Select(r => r.Label)), "",
+                          parts.SelectMany(r => r.Codes).Distinct().ToArray(), parts);
     }
 
     public static Region Resolve(Dictionary<string, Region> index, string query)

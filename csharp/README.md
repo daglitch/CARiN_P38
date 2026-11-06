@@ -17,10 +17,11 @@ Or `dotnet run -c Release --project csharp/src/Osm2Carin.Cli -- <command>`. The 
 | `model --region R` | road graph + POIs, report, model-based estimate |
 | `tiles --region R` | road levels 0–3 as CARiN tiles, checked, plus viewer data |
 | `build --region R [--force] [--estimate-only]` | all of the above; stops when the estimate doesn't fit a CD-R unless `--force` |
-| `disc --region R [--orig <dir>]` | Phase 3a (C# only): road layers grafted onto the original disc, checked, then `out/<region>/disc/<region>-3a.bin/.cue`. `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
+| `disc --region R [--orig <dir>]` | Phase 3a (C# only): road layers grafted onto the original disc, checked, then `out/<region>/disc/<region>-3a.bin/.cue` (burn the `.cue`; the ISO it was made from is in `disc/work/`). `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
 | `cd-split <bin> <dir>`, `cd-build <iso> <bin> [--audio a.raw]`, `cd-verify <bin>` | raw MODE2/2352 image tools |
 
 Options:
+- `--region R`: a Geofabrik region, or several separated by commas (`us/california,us/nevada`), built as one map. Their extracts overlap at the borders; each OSM way, relation and node is taken once.
 - `--out <dir>`: the default is `<repo>/out`.
 - `--profile default|full|compact`.
 - `--no-poi`.

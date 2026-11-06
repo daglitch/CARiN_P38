@@ -353,7 +353,10 @@ Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at
   | References in our blocks, all to the right block type | 1,514,118 | 177,371 |
   | Tiles found from 0x07 | 49,372 / 49,372 | 6,415 / 6,415 |
 
-  Both fit a 74-minute CD-R. EDC/ECC is correct on every sector. The block chain covers the whole file.
+  **California and Nevada on one disc**, like the original (`--region us/california,us/nevada`): 100,517 units of roads, 154,194 blocks, 287,658 sectors (63.9 min, 645 MiB). Every check passed, with 55,643 / 55,643 tiles found from 0x07.
+  - The two Geofabrik extracts overlap at the state line. Each OSM way, relation and node is taken once: 874 border ways and 156 POIs were in both extracts.
+
+  All three images fit a 74-minute CD-R. EDC/ECC is correct on every sector. The block chain covers the whole file.
 - **Read back by OpenCarin** (`tools/phase3a_check.py`, with its spatial lookup set to the DB-REL 26 directory layout):
   - it detects 2048-byte units, DB-REL 26 and sub-revision 8;
   - it walks the chain and decodes every one of our tiles;
