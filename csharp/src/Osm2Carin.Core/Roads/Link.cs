@@ -152,6 +152,7 @@ public static class Link
         foreach (var sp in specs) Fill(sp);
         var units = new int[specs.Count];
         var parts = new Encoder00.Parts?[specs.Count];
+        var widths = new (byte, byte)[specs.Count];
         Parallel.For(0, specs.Count, i =>
         {
             var sp = specs[i];
@@ -159,6 +160,8 @@ public static class Link
             int len = used;
             if (sp.BType == 0 && cf1)
             {
+                widths[i] = ChooseWidths(plain);
+                (plain[6], plain[7]) = widths[i];          // the widths live only in the CF=1 form
                 var p = Encoder00.EncodeParts(plain, Fmt.RecordSizeTable, Fmt.DbRel, Fmt.SubRel, Fmt.Unit);
                 if (p.Head.Length + p.Bits.Length < used) { parts[i] = p; len = p.Head.Length + p.Bits.Length; }
             }
@@ -183,6 +186,7 @@ public static class Link
                 byte[] raw;
                 if (parts[i] is Encoder00.Parts p)
                 {
+                    (plain[6], plain[7]) = widths[i];
                     var head = Encoder00.Head(plain, Fmt.RecordSizeTable, Fmt.Unit);
                     raw = [.. head, .. Encoder00.PatchIds(p, plain, Fmt.RecordSizeTable)];
                     if (head.Length != p.Head.Length)            // cannot happen: re-encode to be safe
@@ -201,6 +205,39 @@ public static class Link
             if (grown == 0) { rt.EndUnit = pos; return specs; }
         }
         throw new InvalidOperationException("block allocation did not settle");
+    }
+
+    /// <summary>The two CF=1 bit widths (decoded bytes 6/7) that make the encoding smallest (link.py
+    /// choose_widths): exact encoder bit cost for widths 0..16, smallest width on ties.</summary>
+    public static (byte w0, byte w1) ChooseWidths(byte[] d)
+    {
+        (int off, int n) Sec(int i) => (BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(8 + 4 * i)), BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(10 + 4 * i)));
+        var (o4, n4) = Sec(4);
+        var lengths = new int[n4];
+        for (int k = 0; k < n4; k++) lengths[k] = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(o4 + 30 * k + 0x0C));
+        var deltas = new List<(int up, int down)>();
+        foreach (var (i, rec) in ((int, int)[])[(5, 8), (6, 16), (7, 6)])
+        {
+            var (off, n) = Sec(i);
+            for (int k = 1; k < n; k++)
+                foreach (int o in (int[])[0, 2])
+                {
+                    int v = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(off + rec * k + o));
+                    int pv = BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(off + rec * (k - 1) + o));
+                    deltas.Add(((v - pv) & 0xFFFF, (pv - v) & 0xFFFF));
+                }
+        }
+        int best0 = 0, best1 = 0;
+        long c0 = long.MaxValue, c1 = long.MaxValue;
+        for (int w = 0; w <= 16; w++)
+        {
+            long lb = 0, db = 0;
+            foreach (int v in lengths) lb += 1 + ((v >> w) != 0 ? 16 : w);
+            foreach (var (up, down) in deltas) db += (up >> w) == 0 ? 1 + w : (down >> w) == 0 ? 2 + w : 18;
+            if (lb < c0) { c0 = lb; best0 = w; }
+            if (db < c1) { c1 = db; best1 = w; }
+        }
+        return ((byte)best0, (byte)best1);
     }
 
     static byte[] PlainOf(TileSpec sp, out int used)

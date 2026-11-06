@@ -82,15 +82,33 @@ class Cell:
         return self.x1 <= x < self.x2 and self.y1 <= y < self.y2
 
 
+# The root square of the original disc's quadtree (0x07 layer directory, the same for every
+# layer): tiles sit at multiples of their own size from its corner. It covers North America.
+DISC_ROOT = (1240326144, -171088640, 671088640)
+
+
 def root_cell(xmin, ymin, xmax, ymax):
-    """Smallest 40960 * 2^k square on the 40960 grid covering the box. On the disc only
-    the 40960 grid is fixed: bigger tiles are not aligned to multiples of their size."""
-    x0 = (xmin - ORIGIN[0]) // BASE * BASE + ORIGIN[0]
-    y0 = (ymin - ORIGIN[1]) // BASE * BASE + ORIGIN[1]
+    """The smallest square of the disc's quadtree that holds the box (so tiles line up with the
+    spatial index cells); outside that root, a square aligned to multiples of its own side on
+    the 40960 grid."""
+    x0, y0, side = DISC_ROOT
+    if x0 <= xmin and y0 <= ymin and xmax <= x0 + side and ymax <= y0 + side:
+        while side > BASE:
+            h = side // 2
+            qx = x0 + (h if xmin >= x0 + h else 0)
+            qy = y0 + (h if ymin >= y0 + h else 0)
+            if xmax <= qx + h and ymax <= qy + h and xmin >= qx and ymin >= qy:
+                x0, y0, side = qx, qy, h
+            else:
+                break
+        return Cell(x0, y0, side, side)
     size = BASE
-    while x0 + size <= xmax or y0 + size <= ymax:
+    while True:
+        x0 = (xmin - ORIGIN[0]) // size * size + ORIGIN[0]
+        y0 = (ymin - ORIGIN[1]) // size * size + ORIGIN[1]
+        if x0 + size >= xmax and y0 + size >= ymax:
+            return Cell(x0, y0, size, size)
         size *= 2
-    return Cell(x0, y0, size, size)
 
 
 def grow_street(cell, xs, ys, wts, leaves):
