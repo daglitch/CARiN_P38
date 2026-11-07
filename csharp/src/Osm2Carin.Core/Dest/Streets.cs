@@ -16,8 +16,9 @@ public sealed class Street
 /// <summary>0x0E street directory block, plain (DB-REL 26, as the disc's 48 plain ones):
 ///   +0x08 descriptors S0 {0x28, n0}, S1, S2; +0x20 next / +0x24 previous 0x0E BLOCK_ID;
 ///   S0 8 B: u16 name, u8 flags 0, u8 language 2 (English), u16 locality 0, u16 -> S1;
-///   S1 4 B: u16 -> S2, u8 count, u8 has house numbers (0);
-///   S2 24 B: i32 x, i32 y (target tile centre), 4 x u16 0x7FFF (no house numbers),
+///   S1 4 B: u16 -> S2, u8 count, u8 1 when any of its S2 links has house numbers;
+///   S2 24 B: i32 x, i32 y (target tile centre), u16 even low / high, odd low / high: the envelope of the
+///            run's 0x04 records (0x7FFF = none; 03-road-network.md §6.3.1),
 ///            u32 tile BLOCK_ID, u16 offset of the first section 4 record in the decoded tile, u16 count;
 ///   then the names. A street with more than 255 runs gets one S0/S1 pair per 255.</summary>
 public sealed class StreetBlk : Blk
@@ -64,7 +65,9 @@ public sealed class StreetBlk : Blk
                     int o = s2 + 24 * i2;
                     var (x1, y1, x2, y2) = sp.Tile.BBox;
                     Wi32(b, o, ((long)x1 + x2) / 2); Wi32(b, o + 4, ((long)y1 + y2) / 2);
-                    for (int h = 0; h < 4; h++) W16(b, o + 8 + 2 * h, 0x7FFF);
+                    var (el, eh, ol, oh) = sp.Hn != null ? Addr.HouseNumbers.Envelope(sp.Hn.Skip(k0).Take(n)) : (0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF);
+                    W16(b, o + 8, el); W16(b, o + 10, eh); W16(b, o + 12, ol); W16(b, o + 14, oh);
+                    if (el != 0x7FFF || ol != 0x7FFF) b[o1 + 3] = 1;
                     W32(b, o + 16, sp.BlockId);
                     W16(b, o + 20, Directory.S4Offset(sp, k0)); W16(b, o + 22, n);
                     i2++;

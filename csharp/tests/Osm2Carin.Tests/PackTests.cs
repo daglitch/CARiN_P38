@@ -11,13 +11,26 @@ namespace Osm2Carin.Tests;
 public class PackTests(ITestOutputHelper log)
 {
     [Fact]
-    public void NevadaWithCitiesStreetsAndPois()
+    public void NevadaWithCitiesStreetsAndPois() => Nevada(false);
+
+    /// <summary>Phase 3d: the same with house numbers from TIGER (needs out/cache/tiger/tl_*_32*_addrfeat.zip).</summary>
+    [Fact]
+    public void NevadaWithHouseNumbers() => Nevada(true);
+
+    void Nevada(bool withHn)
     {
         string repo = Paths.Repo ?? "";
         string isoPath = Path.Combine(repo, "out", "phase0", "orig", "track1.iso");
         string model = Path.Combine(repo, "out", "us_nevada", "model");
         if (!File.Exists(isoPath) || !File.Exists(model + ".places.json")) return;
         Progress.Enabled = false;
+        Core.Addr.HouseNumbers? hn = null;
+        if (withHn)
+        {
+            var zips = Core.Addr.Tiger.Files(Path.Combine(repo, "out", "cache", "tiger"), ["32"]);
+            if (zips.Count == 0) return;
+            hn = Core.Addr.HouseNumbers.Load(zips, s => log.WriteLine(s));
+        }
 
         var iso = Graft.Open(isoPath);
         var original = iso.Bytes.AsSpan(366 * 2048, iso.CarindbSize).ToArray();
@@ -28,7 +41,7 @@ public class PackTests(ITestOutputHelper log)
         var m = RoadModel.Load(model);
         var cities = Cities.Build(m, s => log.WriteLine(s));
         Assert.Contains(cities.List, c => c.Name == "las vegas, nv");
-        var rt = Tiles.Build(m, m.Strings, "Nevada", s => log.WriteLine(s), cities.LinkCityNames());
+        var rt = Tiles.Build(m, m.Strings, "Nevada", s => log.WriteLine(s), cities.LinkCityNames(), hn);
         var alloc = new UnitAllocator(free);
         var specs = Link.Run(rt, alloc, true, s => log.WriteLine(s), withIndex: true);
         Assert.Equal(5, (int)(rt.Blocks.Min(b => System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(b)) >> 8));
@@ -47,6 +60,16 @@ public class PackTests(ITestOutputHelper log)
         Assert.Equal((long)dir.StreetBlocks.Sum(b => b.Streets.Sum(StreetBlk.Pairs)), (long)res["streets reached"]!);
         Assert.Equal((long)res["0x06 records"]!, (long)res["0x06 records matching their POI"]!);
         Assert.Equal((long)res["POIs reached from the cities"]!, (long)res["0x06 records"]!);
+        Assert.Equal((long)res["street links"]!, (long)res["street links whose house-number ranges match the 0x04 records"]!);
+        long hnLinks = (long)res["street links with house numbers"]!;
+        if (!withHn) Assert.Equal(0L, hnLinks);
+        else
+        {
+            log.WriteLine(hn!.Summary);
+            long named = rt.Levels[0].Sum(sp => sp.LinkSrc.Count(l => m.Get<int>("link_name")[l] != 0));
+            Assert.Equal(rt.Levels[0].Count(sp => sp.Hn != null), (long)res["0x04 house-number blocks"]!);
+            Assert.True(hnLinks > named / 2, $"only {hnLinks} of {named} named street links got house numbers");
+        }
 
         // the kept blocks are untouched apart from the patched 0x07 / 0x0A
         for (int u = 0; u < 5; u++)

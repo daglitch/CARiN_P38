@@ -62,6 +62,10 @@ public sealed class TileSpec(int btype, Cell cell, Tile26 tile)
     /// <summary>The model link of each section 4 record, in record order (street directory, POI links).</summary>
     public int[] LinkSrc = [];
     public uint BlockId;
+    /// <summary>Phase 3d: the 0x04 record of each section 4 link (null = none), when any link has house numbers,
+    /// and the BLOCK_ID of the tile's 0x04 block.</summary>
+    public ushort[]?[]? Hn;
+    public uint HnId;
     public TileSpec? Parent;
     // link.py
     public List<(TileSpec nb, int u, int v)> S9 = new();
@@ -492,13 +496,14 @@ public static partial class Tiles
 
     // ------------------------------------------------------------------ main entry
     /// <summary>Street tiles name their links' cities: linkCity[model link] is the display name
-    /// ("san jose, ca") or null/"" for none; without it every tile names regionLabel (Phase 2).</summary>
-    public sealed record NameCtx(string Label, string?[]? LinkCity);
+    /// ("san jose, ca") or null/"" for none; without it every tile names regionLabel (Phase 2).
+    /// Hn (Phase 3d) gives the street links their house numbers.</summary>
+    public sealed record NameCtx(string Label, string?[]? LinkCity, Addr.HouseNumbers? Hn = null);
 
     public static RoadTiles Build(RoadModel m, List<string> strings, string regionLabel = "", Action<string>? log = null,
-                                  string?[]? linkCity = null)
+                                  string?[]? linkCity = null, Addr.HouseNumbers? houseNumbers = null)
     {
-        var nctx = new NameCtx(regionLabel, linkCity);
+        var nctx = new NameCtx(regionLabel, linkCity, houseNumbers);
         log ??= Console.WriteLine;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         string T() => $"  [{sw.Elapsed.TotalSeconds:F1} s]";
@@ -855,6 +860,7 @@ public static partial class Tiles
 
         // S7, S4
         int recN = Tile26.Rec4(btype);
+        var hn = street && regionLabel.Hn != null ? new ushort[]?[links.Count] : null;
         for (int k = 0; k < links.Count; k++)
         {
             var L = links[k]; var a = L.Attr;
@@ -875,6 +881,11 @@ public static partial class Tiles
             {
                 r.Raw[0x1A] = (byte)(0x10 | ((a.Flags & 2) != 0 ? 0x08 : 0));
                 r.Raw[0x1B] = (byte)((bu << 7) | (Width(a) << 1));
+                if (hn != null && a.Name != 0 && regionLabel.Hn!.Lookup(strings[a.Name], L.Pts) is ushort[] num)
+                {
+                    hn[k] = num;
+                    r.Raw[0x1B] |= 1;                  // the link has house numbers (its 0x04 record)
+                }
                 r.Refs[0x18] = new Ref(2, s2Of[k]);
                 r.Refs[0x1C] = new Ref(11, 0);
             }
@@ -887,6 +898,7 @@ public static partial class Tiles
             }
             t.Secs[4].Add(r);
         }
+        if (hn != null && hn.Any(h => h != null)) spec.Hn = hn;
         var sent = new Rec(recN);
         sent.Refs[0] = null; sent.Refs[2] = null; sent.Refs[4] = new Ref(7, t.Secs[7].Count); sent.Refs[6] = null; sent.Refs[8] = null;
         sent.Refs[0x12] = new Ref(10, s10.Count); sent.Refs[0x14] = new Ref(12, 0);

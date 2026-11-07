@@ -17,7 +17,7 @@ Or `dotnet run -c Release --project csharp/src/Osm2Carin.Cli -- <command>`. The 
 | `model --region R` | road graph + POIs, report, model-based estimate |
 | `tiles --region R` | road levels 0–3 as CARiN tiles, checked, plus viewer data |
 | `build --region R [--force] [--estimate-only]` | all of the above; stops when the estimate doesn't fit a CD-R unless `--force` |
-| `disc --region R [--orig <dir>]` | Phases 3b/3c (C# only): roads, cities, streets and POIs packed into the original disc, checked, then `out/<region>/disc/<region>-3c.bin/.cue` (burn the `.cue`; the ISO it was made from is in `disc/work/`). `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
+| `disc --region R [--orig <dir>] [--no-house-numbers]` | Phases 3b–3d (C# only): roads, cities, streets, house numbers and POIs packed into the original disc, checked, then `out/<region>/disc/<region>-3d.bin/.cue` (`-3c` with `--no-house-numbers`). House numbers come from the US Census TIGER address ranges, downloaded to `out/cache/tiger` on first use (burn the `.cue`; the ISO it was made from is in `disc/work/`). `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
 | `cd-split <bin> <dir>`, `cd-build <iso> <bin> [--audio a.raw]`, `cd-verify <bin>` | raw MODE2/2352 image tools |
 
 Long runs show their steps (`[2/5] Road tiles…`) and a progress bar with elapsed time and ETA for each slow step, on stderr. In a terminal the bar redraws in place; in a log file a line is written every 10% once a step has run 5 seconds.
@@ -28,6 +28,7 @@ Options:
 - `--out <dir>`: the default is `<repo>/out`.
 - `--profile default|full|compact`.
 - `--no-poi`.
+- `--no-house-numbers`: for `disc`, leave house numbers out (the 3c disc); no TIGER download.
 - `--refresh`: download again.
 - `--plain`: store street tiles uncompressed.
 - `--check-every N`: run the per-tile read-back checks on every Nth tile only. The default, 1, checks all tiles.
@@ -46,6 +47,8 @@ The port follows the Python step for step. The tests check it byte for byte agai
 | `RoadTilesTests` | the Nevada road tiles (6,380 blocks) equal the Python ones, on disc and decoded |
 | `HypotTests` | CPython's `math.hypot`, ported bit for bit |
 | `GraftTests` | Nevada grafted onto the original disc: chain intact, only the 0x07 BLOCK_IDs changed, every reference of the right type, every tile found from 0x07, ISO sizes patched |
+| `PackTests` | Nevada's roads, cities, streets, POIs and (with the TIGER files) house numbers packed into the original disc: every lookup from 0x07 and 0x0A read back; house-number blocks, link bits and street-directory ranges agree |
+| `HouseNumberTests` | how the original disc ties its 20,702 house-number blocks to the street tiles; TIGER ranges matched to the original's own segments agree with its numbers (side A = left on 95% of sides) |
 
 To match Python exactly, the port reproduces three things from it:
 - numpy's pairwise float sums;

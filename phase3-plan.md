@@ -13,7 +13,8 @@ Status 2026-11-06:
   - packed into the original carindb's freed space.
 
   Car test pending.
-- **Not started:** 3d (house numbers, signposts), brands, country-wide POI name search.
+- **3d house numbers done offline** (2026-11-07, `Addr/*.cs`, `phase3d-car-test.md`): 0x04 blocks, link bits and 0x0E ranges from the US Census TIGER address ranges. Car test pending.
+- **Not started:** signposts, POI house numbers, OSM address points as a second source, brands, country-wide POI name search.
 
 ## Approach: graft onto the original database
 

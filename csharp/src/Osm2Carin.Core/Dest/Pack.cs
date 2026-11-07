@@ -172,6 +172,48 @@ public static class Pack
 
         // the name of section 4 record at `off` of a street tile (decoded): S4 +0x18 -> S2 -> +0 name
         var decoded = rt.Levels[0].ToDictionary(sp => sp.BlockId, sp => sp.Decoded);
+
+        // house numbers (3d): tile +0x54 -> its 0x04 block, which points back, has one record per section 4
+        // link, and a record with numbers exactly where the link's +0x1B bit 0 is set; +0x70 = 0x0101 / 0x0001
+        var hnRecs = new Dictionary<uint, ushort[][]>();
+        long hnBlocks = 0, hnLinks = 0, hnBitOk = 0;
+        foreach (var (tid, d) in decoded)
+        {
+            int o4 = U16(d, 8 + 16), n4 = U16(d, 10 + 16);             // n4: the links, without the sentinel
+            uint hid = U32(d, 0x54);
+            int w70 = U16(d, 0x70);
+            if (hid == 0)
+            {
+                if (w70 != 0x0001) Bad($"tile 0x{tid:x8}: +0x70 = {w70:X4} without house numbers");
+                for (int k = 0; k < n4; k++) if ((d[o4 + 30 * k + 0x1B] & 1) != 0) Bad($"tile 0x{tid:x8}: house-number bit without a 0x04 block");
+                continue;
+            }
+            if (T(hid) != 0x04) { Bad($"tile 0x{tid:x8}: +0x54 is not a 0x04 block"); continue; }
+            if (w70 != 0x0101) Bad($"tile 0x{tid:x8}: +0x70 = {w70:X4} with house numbers");
+            var hb = Block((int)(hid >> 8));
+            hnBlocks++;
+            if (U32(hb, 0) != hid || U32(hb, 12) != tid || U16(hb, 8) != 0x10) Bad($"0x04 0x{hid:x8}: header does not match tile 0x{tid:x8}");
+            int cnt = U16(hb, 10);
+            if (cnt != n4) { Bad($"0x04 0x{hid:x8}: {cnt} records for {n4} links"); continue; }
+            var recs = new ushort[cnt][];
+            for (int k = 0; k < cnt; k++)
+            {
+                var r = recs[k] = new ushort[5];
+                for (int f = 0; f < 5; f++) r[f] = (ushort)U16(hb, 0x10 + 10 * k + 2 * f);
+                bool has = r[0] != 0x7FFF || r[1] != 0x7FFF || r[2] != 0x7FFF || r[3] != 0x7FFF;
+                if (has) hnLinks++;
+                if (has != ((d[o4 + 30 * k + 0x1B] & 1) != 0)) Bad($"0x04 0x{hid:x8} record {k}: numbers and the link's bit disagree");
+                else hnBitOk++;
+                if (has != (r[4] != 0)) Bad($"0x04 0x{hid:x8} record {k}: scheme {r[4]}");
+                for (int side = 0; side < 2; side++)
+                    if ((r[side] == 0x7FFF) != (r[side + 2] == 0x7FFF)) Bad($"0x04 0x{hid:x8} record {k}: half a side");
+            }
+            hnRecs[tid] = recs;
+        }
+        res["0x04 house-number blocks"] = hnBlocks;
+        res["street links with house numbers"] = hnLinks;
+        res["0x04 records agreeing with their link's bit"] = hnBitOk;
+        long envOk = 0, envNumbered = 0;
         string LinkName(uint tile, int off, out bool ok)
         {
             ok = false;
@@ -221,12 +263,20 @@ public static class Pack
                             string name = Str(eb, U16(eb, e0));
                             streets++;
                             int s2 = U16(eb, e1), cnt = eb[e1 + 2];
+                            bool anyHn = false;
                             for (int r = 0; r < cnt; r++)
                             {
                                 int o = s2 + 24 * r;
                                 uint tile = U32(eb, o + 16); int off = U16(eb, o + 20), num = U16(eb, o + 22);
                                 links++;
                                 if (T(tile) != 0x00) { Bad($"street {name}: link to type {T(tile)}"); continue; }
+                                // S2 +8..+14: the envelope of the run's 0x04 records
+                                int k0 = decoded.TryGetValue(tile, out var td) ? (off - U16(td, 8 + 16)) / 30 : 0;
+                                var env = hnRecs.TryGetValue(tile, out var hr) && k0 >= 0 && k0 + num <= hr.Length
+                                    ? Addr.HouseNumbers.Envelope(hr.Skip(k0).Take(num)) : (0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF);
+                                if ((U16(eb, o + 8), U16(eb, o + 10), U16(eb, o + 12), U16(eb, o + 14)) == env) envOk++;
+                                else Bad($"street {name}: S2 house numbers differ from the 0x04 records");
+                                if (env.Item1 != 0x7FFF || env.Item3 != 0x7FFF) { anyHn = true; envNumbered++; }
                                 for (int q = 0; q < num; q++)
                                 {
                                     string ln = LinkName(tile, off + 30 * q, out bool ok);
@@ -235,6 +285,7 @@ public static class Pack
                                     else Bad($"street {name}: link named '{ln}'");
                                 }
                             }
+                            if (eb[e1 + 3] != (anyHn ? 1 : 0)) Bad($"street {name}: house-number flag {eb[e1 + 3]}");
                         }
                     }
                 int p3 = U16(cb, s1 + 8), n3 = U16(cb, s1 + 10);
@@ -265,6 +316,8 @@ public static class Pack
         res["streets reached"] = streets;
         res["street links"] = links;
         res["street links landing on a road of that name"] = linksNamed;
+        res["street links whose house-number ranges match the 0x04 records"] = envOk;
+        res["street links with house-number ranges"] = envNumbered;
         res["POIs reached from the cities"] = poisSeen;
         res["POI road links on a street link"] = poiLinks;
 

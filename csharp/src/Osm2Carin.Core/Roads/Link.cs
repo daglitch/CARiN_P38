@@ -115,6 +115,12 @@ public static class Link
         t.BlockId = sp.BlockId;
         var hw = (byte[])t.HdrWords.Clone();
         BinaryPrimitives.WriteUInt32BigEndian(hw.AsSpan(4), sp.Parent?.BlockId ?? 0);
+        if (sp.BType == 0)
+        {
+            // +0x54: the tile's house-number block (0x04); +0x70 = 0x0101 with one, 0x0001 without (as on the disc)
+            BinaryPrimitives.WriteUInt32BigEndian(hw.AsSpan(0), sp.HnId);
+            hw[0x1C] = (byte)(sp.HnId != 0 ? 1 : 0);
+        }
         if (sp.BType != 0) BinaryPrimitives.WriteUInt32BigEndian(hw.AsSpan(8), (uint)sp.S8Cell);
         t.HdrWords = hw;
         for (int i = 0; i < sp.S9.Count; i++)
@@ -169,7 +175,9 @@ public static class Link
         }
         var layerStart = new Dictionary<int, int>();
         { int i0 = 0; foreach (int lv in Order) { layerStart[lv] = i0; i0 += rt.Levels[lv].Count; } }
-        foreach (var sp in specs) sp.BlockId = 0x00FFFF01;
+        foreach (var sp in specs) { sp.BlockId = 0x00FFFF01; sp.HnId = sp.Hn != null ? 0x00FFFF01u : 0; }
+        var hnTiles = rt.Levels.GetValueOrDefault(0)?.Where(sp => sp.Hn != null).ToList() ?? [];
+        int n0 = rt.Levels.GetValueOrDefault(0)?.Count ?? 0;
         foreach (var sp in specs) Fill(sp);
         var units = new int[specs.Count];
         var parts = new Encoder00.Parts?[specs.Count];
@@ -195,8 +203,11 @@ public static class Link
         for (int rnd = 0; rnd < maxRounds; rnd++)
         {
             alloc.Restore(mark);
-            for (int i = 0; i < specs.Count; i++)
+            for (int i = 0; i <= specs.Count; i++)
             {
+                // the house-number blocks follow the street tiles, as on the disc
+                if (i == n0) foreach (var sp in hnTiles) sp.HnId = alloc.AllocId(HnUnits(sp));
+                if (i == specs.Count) break;
                 if (withIndex)
                     foreach (int lv in Order)
                         if (layerStart[lv] == i && rt.Levels[lv].Count > 0) Spatial.Allocate(rt.Index[lv], alloc);
@@ -240,12 +251,38 @@ public static class Link
                 {
                     if (withIndex && rt.Levels[lv].Count > 0) rt.Blocks.AddRange(Spatial.Write(rt.Index[lv]));
                     rt.Blocks.AddRange(rt.Levels[lv].Select(sp => sp.Raw));
+                    if (lv == 0) rt.Blocks.AddRange(hnTiles.Select(HnBlock));
                 }
                 return specs;
             }
         }
         throw new InvalidOperationException("block allocation did not settle");
     }
+
+    /// <summary>Units of a tile's 0x04 block: a 0x10 header and one 10-byte record per section 4 link.</summary>
+    public static int HnUnits(TileSpec sp) => (0x10 + 10 * sp.Hn!.Length + Fmt.Unit - 1) / Fmt.Unit;
+
+    /// <summary>A street tile's house-number block (0x04, plain; 03-road-network.md §6.4, checked on the disc
+    /// by HouseNumberTests): +0 BLOCK_ID, +4 type 4, +8 descriptor {0x10, n}, +0x0C the tile's BLOCK_ID,
+    /// +0x10 n records u16 f0 f1 f2 f3 scheme, one per section 4 link (the sentinel has none).</summary>
+    public static byte[] HnBlock(TileSpec sp)
+    {
+        var hn = sp.Hn!;
+        var b = new byte[HnUnits(sp) * Fmt.Unit];
+        BinaryPrimitives.WriteUInt32BigEndian(b, sp.HnId);
+        BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(4), 0x04);
+        BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(8), 0x10);
+        BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(10), (ushort)hn.Length);
+        BinaryPrimitives.WriteUInt32BigEndian(b.AsSpan(12), sp.BlockId);
+        for (int k = 0; k < hn.Length; k++)
+        {
+            var r = hn[k] ?? NoNumbers;
+            for (int f = 0; f < 5; f++) BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(0x10 + 10 * k + 2 * f), r[f]);
+        }
+        return b;
+    }
+
+    static readonly ushort[] NoNumbers = [0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF, 0];
 
     /// <summary>The two CF=1 bit widths (decoded bytes 6/7) that make the encoding smallest (link.py
     /// choose_widths): exact encoder bit cost for widths 0..16, smallest width on ties.</summary>

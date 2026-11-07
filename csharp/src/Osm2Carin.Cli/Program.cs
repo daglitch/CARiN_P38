@@ -23,9 +23,11 @@ public static class Program
                              --region us/california,us/nevada builds several regions as one map;
                              region:highways adds only its motorways and trunk roads, region:major also
                              its primary roads (us/california,us/nevada,us:highways)
-          osm2carin disc     --region us/california [--orig <dir>]
-                                                       our roads, cities, streets and POIs on the original
-                                                       disc -> out/<region>/disc/<region>-3c.bin/.cue
+          osm2carin disc     --region us/california [--orig <dir>] [--no-house-numbers]
+                                                       our roads, cities, streets, house numbers and POIs on
+                                                       the original disc -> out/<region>/disc/<region>-3d.bin/.cue
+                                                       (-3c without house numbers). House numbers come from the
+                                                       US Census TIGER address ranges (downloaded to <out>/cache/tiger)
           osm2carin cd-split <orig.bin> <dir>             raw image -> track1.iso + audio.raw
           osm2carin cd-build <track1.iso> <out.bin> [--audio audio.raw]
           osm2carin cd-verify <image.bin>                 EDC/ECC of every data sector
@@ -34,8 +36,8 @@ public static class Program
                   --profile default|full|compact  --no-poi
                  --refresh (re-download)  --plain (street tiles uncompressed)  --check-every N (validate every Nth tile)
 
-        Phase status: 1 (download, road model, estimate), 2 (road tiles, levels 0-3) and 3a (roads grafted
-        onto the original disc, .bin/.cue) are done; 3b-3c (cities, streets, POIs) are not yet.
+        Phase status: 1 (download, road model, estimate), 2 (road tiles, levels 0-3), 3a-3c (roads, cities,
+        streets, POIs on the original disc, .bin/.cue) and 3d (house numbers) are done offline; none car-tested yet.
         """;
 
     sealed class Args
@@ -44,7 +46,7 @@ public static class Program
         public List<string> Pos = new();
         public string? Region, Audio, Orig;
         public string Out = DefaultOut(), Profile = "default";
-        public bool NoPoi, Refresh, Force, EstimateOnly, Plain;
+        public bool NoPoi, Refresh, Force, EstimateOnly, Plain, NoHouseNumbers;
         public int CheckEvery = 1;
     }
 
@@ -74,6 +76,7 @@ public static class Program
                 case "--orig": a.Orig = Path.GetFullPath(Next()); break;
                 case "--check-every": a.CheckEvery = int.Parse(Next()); break;
                 case "--no-poi": a.NoPoi = true; break;
+                case "--no-house-numbers": a.NoHouseNumbers = true; break;
                 case "--refresh": a.Refresh = true; break;
                 case "--force": a.Force = true; break;
                 case "--estimate-only": a.EstimateOnly = true; break;
@@ -186,14 +189,15 @@ public static class Program
 
     static int RunTiles(Args a, Regions.Region r, RoadModel? m = null) => RunTiles(a, r, m, UnitAllocator.From(0), null, out _, out _);
 
-    static int RunTiles(Args a, Regions.Region r, RoadModel? m, UnitAllocator alloc, string?[]? linkCity, out RoadTiles rt, out List<TileSpec> specs)
+    static int RunTiles(Args a, Regions.Region r, RoadModel? m, UnitAllocator alloc, string?[]? linkCity, out RoadTiles rt, out List<TileSpec> specs,
+                        Osm2Carin.Core.Addr.HouseNumbers? hn = null)
     {
         int baseUnit = alloc.Pos;
         var d = Path.Combine(a.Out, Slug(r.Id));
         if (m == null)
             m = File.Exists(Path.Combine(d, "model.npz")) ? RoadModel.Load(Path.Combine(d, "model")) : RunModel(a, r).m;
         var sw = Stopwatch.StartNew();
-        rt = Tiles.Build(m, m.Strings, r.Label, null, linkCity);
+        rt = Tiles.Build(m, m.Strings, r.Label, null, linkCity, hn);
         Console.WriteLine($"tiles built in {sw.Elapsed.TotalSeconds:F1} s");
         specs = Link.Run(rt, alloc, !a.Plain, withIndex: true);
         var tc = sw.Elapsed.TotalSeconds;
@@ -263,7 +267,8 @@ public static class Program
         var runTime = Stopwatch.StartNew();
         var d = Path.Combine(a.Out, Slug(r.Id));
         bool haveModel = File.Exists(Path.Combine(d, "model.npz")) && File.Exists(Path.Combine(d, "model.places.json"));
-        int nStages = haveModel ? 6 : 7, stage = 0;
+        bool withHn = !a.NoHouseNumbers;
+        int nStages = (haveModel ? 6 : 7) + (withHn ? 1 : 0), stage = 0;
         Progress.Stage(++stage, nStages, "Original disc");
         var iso = Graft.Open(isoIn);
         var original = iso.Bytes.AsSpan((int)((long)iso.CarindbLba * 2048), iso.CarindbSize).ToArray();
@@ -274,9 +279,28 @@ public static class Program
         else { Progress.Stage(++stage, nStages, $"Road model from OSM ({string.Join(", ", r.Extracts.Select(x => x.Id))})"); m = RunModel(a, r).m; }
         Progress.Stage(++stage, nStages, "Cities");
         var cities = Dest.Cities.Build(m, Console.WriteLine);
+        Osm2Carin.Core.Addr.HouseNumbers? hn = null;
+        if (withHn)
+        {
+            // the fully detailed states only, as for the POIs
+            var fips = r.Extracts.Where(x => x.Only == null).Select(StateCode)
+                .Select(c => Osm2Carin.Core.Addr.Tiger.StateFips.GetValueOrDefault(c)).OfType<string>().ToList();
+            Progress.Stage(++stage, nStages, "House numbers: TIGER address ranges");
+            if (fips.Count == 0) Console.WriteLine("house numbers: no US state among the detailed regions; none added");
+            else hn = Osm2Carin.Core.Addr.HouseNumbers.Load(Osm2Carin.Core.Addr.Tiger.Fetch(fips, Path.Combine(Cache(a), "tiger")), Console.WriteLine);
+        }
         Progress.Stage(++stage, nStages, "Road tiles, spatial index and tile checks");
         var alloc = new UnitAllocator(free);
-        int rc = RunTiles(a, r, m, alloc, cities.LinkCityNames(), out var rt, out var specs);
+        int rc = RunTiles(a, r, m, alloc, cities.LinkCityNames(), out var rt, out var specs, hn);
+        if (hn != null)
+        {
+            var st = rt.Levels[0];
+            long named = st.Sum(sp => sp.LinkSrc.Count(l => m.Get<int>("link_name")[l] != 0));
+            long numbered = st.Where(sp => sp.Hn != null).Sum(sp => sp.Hn!.Count(h => h != null));
+            int blocks = st.Count(sp => sp.Hn != null), units = st.Where(sp => sp.Hn != null).Sum(Link.HnUnits);
+            Console.WriteLine($"house numbers: {numbered:N0} of {named:N0} named street links ({100.0 * numbered / Math.Max(named, 1):F1}%) in " +
+                              $"{blocks:N0} 0x04 blocks, {units:N0} units");
+        }
         if (rc != 0 && !a.Force) { Console.WriteLine("road tile checks failed; not building a disc (--force to build anyway)"); return rc; }
 
         Progress.Stage(++stage, nStages, "Streets, POIs and cities; pack and check");
@@ -296,7 +320,7 @@ public static class Program
         var (newIso, vds) = Graft.WriteIso(iso, packed.Db);
         var outDir = Path.Combine(d, "disc");
         Directory.CreateDirectory(Path.Combine(outDir, "work"));        // the ISO is a working file: burn the .cue
-        string name = Slug(r.Id) + "-3c";
+        string name = Slug(r.Id) + (hn != null ? "-3d" : "-3c");
         string isoOut = Path.Combine(outDir, "work", name + ".iso"), bin = Path.Combine(outDir, name + ".bin");
         File.WriteAllBytes(isoOut, newIso);
         int t1 = CdImage.Build(isoOut, bin, File.Exists(audio) ? audio : null);
