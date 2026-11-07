@@ -484,6 +484,56 @@ That index, written from scratch, was listed, searched and routed to on a CNI1. 
 
 The sections below are kept as a record of the independent analysis. Where they conflict with the summary above, **the summary is correct**. Several early guesses were later revised (e.g. "not compressed", "records run across block boundaries", the "24-bit word count", "Nevada" for the Detroit parcel).
 
+
+### Phase 3d (2026-11-07): house numbers from TIGER
+
+**0x04 on this disc [verified, all 20,702 blocks, `HouseNumberTests`].** The layout is OpenCarin's (§6.4), unchanged at DB-REL 26:
+- **Block:** plain (CF=0), exactly as many units as it needs. `+0x08` descriptor `{0x10, n}`; `+0x0C` the street tile's BLOCK_ID; then n records of 10 B, `u16 f0 f1 f2 f3 scheme`.
+- **Records:** one per section 4 link of its tile, without the sentinel. So n is the tile's S4 descriptor count.
+- **The tile:** header `+0x54` holds the 0x04 BLOCK_ID and `+0x70` = 0x0101 (19 tiles have 0x0100). Tiles without house numbers (5,321) have `+0x54` = 0 and `+0x70` = 0x0001.
+- **Link bit:** S4 `+0x1B` bit 0 is set exactly on the links whose record has numbers (1,657,361 / 1,657,361, and never on the others).
+- **Contents:** 2.7 M records, 61% with numbers. Scheme 2 (odd/even by side) 1.62 M, scheme 1 (mixed) 36,000. With scheme 2, a side keeps one parity (99.997%) and the two sides have opposite parities (99.7%).
+
+**Source: US Census TIGER/Line ADDRFEAT (2025, public domain).** These are per-edge, per-side address ranges, the kind of data the original was built from.
+- **Why not OSM:** OSM's own addresses cover few streets. Only 35% of California's named streets (5 km cells) and 18% of Nevada's have an `addr:street` of their name (`tools/addr_survey.py`).
+- **No ID shortcut:** only 3.6% / 0.6% of OSM street length still carries `tiger:tlid`, so the ranges are matched by name and geometry.
+
+**Matching (`Addr/HouseNumbers.cs`).** For each street link (S4 record, start → end):
+1. **Name:** the TIGER street of the same name. Names are compared as TIGER writes them: "South Edmonds Drive" = "S Edmonds Dr"; failing that, without direction and street type.
+2. **Middle:** under the middle of the link, within 30 m, |cos| ≥ 0.7.
+3. **Ends:** at each end, the nearest edge of that name within 40 m. Its number there is interpolated along the edge, rounded to the side's parity.
+4. **Sides:** when the edge runs the other way, its left and right swap.
+
+The record is (left start, right start, left end, right end, scheme): **side A = the left of start → end.**
+
+**Checked against the original disc.** The matcher was run on the original's own numbered segments in California and Nevada (168,614 in a 1-in-8 sample, 2002 geometry and names):
+- 77% get numbers;
+- 95.0% of sides have the disc's parity with side A = left, against 5.1% with A = right;
+- 98.2% of our ranges are within 100 of the disc's.
+
+**What we write:**
+- **0x04 blocks:** plain, one per street tile with any numbers, allocated right after the street tiles (as on the disc).
+- **Tiles:** header `+0x54` / `+0x70` and the S4 bit (both in the CF=1 prologue / records, so encoded as usual).
+- **0x0E street directory:** S2 `+8..+14` = the envelope of the run's 0x04 records (OpenCarin's rule); S1 `+3` = 1 when any of its runs has numbers.
+
+| | Nevada | CA + NV + US highways |
+|---|---|---|
+| TIGER ranges | 166,045 (17 counties) | 1,643,578 (75 counties) |
+| Named street links with numbers | 192,732 / 301,917 (63.8%) | 2,140,608 / 3,515,589 (60.9%) |
+| 0x04 blocks | 2,578 (3,368 units) | 31,568 (38,916 units) |
+| Disc | 187,141 sectors (41.6 min; fits in the freed space) | 249,056 sectors (55.3 min), fits a 74-min CD-R |
+
+**Checks [verified offline]:**
+- **Pack check:** every 0x04 block points back to its tile, has one record per link, and agrees with every link bit; every street-directory range equals its envelope; every flag is right.
+- **OpenCarin's checker** (`scripts/routing/check_04_house_numbers.py`) on the highways disc:
+  - all 31,568 blocks are tied to street tiles;
+  - record count = S4 count in all 200 sampled tiles;
+  - 74,132 / 74,132 sampled 0x0E ranges equal the envelope (the original: 96.8%).
+
+**Unverified until the car test:**
+- whether the unit asks for a house number and places it;
+- whether side A really is the left: the original says so on 95% of sides.
+
 ## Round 1: disc layout
 - Track 1: MODE2/2352 data, 186,691 sectors, all Form 1 except the last 150 (the postgap). **[seen]**
 - Track 2: short audio track (about 300 sectors / 4 s), starting at 41:29:16. Probably a "this is not an audio CD" warning track. **[inferred]**
