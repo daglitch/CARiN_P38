@@ -20,7 +20,7 @@ public static class Spatial
 
     /// <summary>Grid cell side per road layer, as on the original disc (512² cells for the street
     /// layer over its root square, 128² / 64² / 32² for 0x03 / 0x02 / 0x01).</summary>
-    public static readonly Dictionary<int, long> CellSide = new() { [0] = 1310720, [3] = 5242880, [2] = 10485760, [1] = 20971520 };
+    public static readonly Dictionary<int, long> CellSide = new() { [0] = 1310720, [3] = 5242880, [2] = 10485760, [1] = 20971520, [6] = 2621440 };
 
     public sealed class CellNode
     {
@@ -135,7 +135,18 @@ public static class Spatial
 
     /// <summary>Give the layer's 0x08 and 0x09 blocks IDs from `pos` on (0x08 run, then the 0x09
     /// nodes). Returns the next free unit.</summary>
-    public static int Allocate(LayerIndex li, int pos)
+    /// <summary>As below, from an allocator: the 0x08 run in one piece (the lookup walks it
+    /// physically), then each 0x09 node.</summary>
+    public static void Allocate(LayerIndex li, UnitAllocator a)
+    {
+        int run = a.Alloc(li.GridUnits);
+        if (Allocate(li, run, gridOnly: true) != run + li.GridUnits) throw new InvalidOperationException("grid run");
+        foreach (var node in li.Nodes) node.BlockId = a.AllocId(node.Units);
+    }
+
+    public static int Allocate(LayerIndex li, int pos) => Allocate(li, pos, gridOnly: false);
+
+    static int Allocate(LayerIndex li, int pos, bool gridOnly)
     {
         for (int i = 0; i < li.GridBlocks.Count; i++)
         {
@@ -143,6 +154,7 @@ public static class Spatial
             li.GridBlocks[i] = ((uint)((pos << 8) | b.units), b.units, b.first, b.count);
             pos += b.units;
         }
+        if (gridOnly) return pos;
         foreach (var node in li.Nodes)
         {
             node.BlockId = (uint)((pos << 8) | node.Units);

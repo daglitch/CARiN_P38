@@ -30,7 +30,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('iso')
     ap.add_argument('opencarin')
-    ap.add_argument('--base', type=int, default=186175, help='first unit of our layers (original carindb length)')
+    ap.add_argument('--base', type=int, default=5, help='first unit of our blocks: 5 for packed discs (3c), 186175 for 3a discs')
     ap.add_argument('--out', help='write the results as JSON here')
     a = ap.parse_args()
     sys.path.insert(0, a.opencarin)

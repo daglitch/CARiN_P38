@@ -1,5 +1,7 @@
 # Phase 3a car test: does the unit draw and route on our OSM roads?
 
+> **Superseded by `phase3c-car-test.md`.** `osm2carin disc` now builds the 3c disc: roads plus cities, streets and POIs, packed into the original database. 3a images built earlier are still in `out\<region>\disc\` and remain a useful roads-only fallback.
+
 **Run the Phase 0 test first.** If the unit rejects a modified disc, or our compressed street tiles (`test-reencoded`), this test can't work either.
 
 ## The images

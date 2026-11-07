@@ -379,6 +379,60 @@ Found on the way: our tiles leave decoded bytes 6/7 (the two CF=1 bit widths) at
   - its lookup finds San Jose, Los Angeles and San Francisco on our street tiles (California), and Las Vegas and Reno on all four levels (Nevada).
 - **Unverified until the car test:** our coarse layers' grids are finer than the original's. 0x01, 0x02 and 0x03 have 256² cells against the disc's 32² / 64² / 128², because their tile edges are finer (Phase 3 above). The format allows it, since the cell side is read from the 0x08 header, but no original disc does it.
 
+### Phases 3b/3c (2026-11-06): cities, streets and POIs from OSM, packed into the original disc
+**Destination blocks at DB-REL 26 [seen on this disc].** These are OpenCarin's DB-REL 22 sizes, plus the block chains.
+
+| Block | Layout |
+|---|---|
+| 0x0A country | US record at S1 (44 B). `+0` 0x0D city-trie root. `+0x18` country-wide POI tries (S3, 12 B: 0x11 root, category). |
+| 0x0D / 0x0F / 0x11 tries | One section, `{0x0C, n}`. 12 B records `u32 BLOCK_ID, u8 letter, u8 leaf, u16 offset, u16 count, u16 0`. |
+| 0x0C cities (111 blocks) | Descriptors S0, S1, –, S3, –, S5. `+0x20/+0x24` next/previous 0x0C. S0 8 B: name, 2, post town (the county here), → S1. S1 20 B: 0x0F root, S3 range, city-centre tile + S4 offset. S3 12 B per POI category. Names read `abbeville, al`: **the city list covers the whole US.** |
+| 0x0E street directory (8,250, 48 plain) | S0 8 B: name, flags, language 2, locality, → S1. **S1 4 B** (not 6): → S2, run count, has house numbers. S2 24 B: tile centre, 4 house-number u16 (0x7FFF = none), tile BLOCK_ID, S4 offset in the decoded tile, count. `+0x20/+0x24` next/previous. |
+| 0x10 POI details (2,251) | S0 8 B, S1 40 B, S4 8 B (tile, S4 offset, 0). `+0x20/+0x24` next/previous. S1 `+0x16` is u32 0x00010000 on the records seen. |
+| 0x06 POI map (1,704) | One section `{0x20, n}`, bbox at `+0x10`, 20 B records `T[0x32]` (0x10 block, S0 offset, local x/y, category, brand, 0, POI ID). |
+| Street-tile names | S1 one record per city in the tile (`san jose, ca`, `+2` its county). S2 per street: `+2` locality (a city name), `+4` its city's S1. Name strings are absolute block offsets. |
+
+**What we write** (`osm2carin disc`, `Dest/*.cs`):
+- **Cities.** OSM `place=city/town/village/hamlet` of the fully detailed regions, named `name, st`. Every named road and POI goes to the nearest one (weighted: city 3, town 2, village 1.5, hamlet 1).
+- **Street tiles** carry each street's city (S1/S2, locality = city).
+- **Streets.** A street is (city, name). One 0x0E entry lists its runs of consecutive same-name S4 records across the street tiles. There are no house numbers yet (0x7FFF).
+- **Tries.** 0x0F street tries per city and the 0x0D city trie are built by OpenCarin's compiler rule: group by next letter, `@` at the end, leaf once a group is consecutive in one block. 0x11 is one level, first letters only.
+- **POIs.** Named (or branded) POIs, each linked to the nearest street link within ~300 m. The category copy only, no brands. 0x06 tiles are quadtree cells of the disc's root square (≤ 700 POIs, side ≤ 2,621,440) with their own 0x08/0x09 index on 0x07 record 1.
+- **0x07 S0** category list is kept.
+
+**Packing (Phase 4).**
+- **Kept in place:** the system blocks (units 0–4) and the background layers plus TMC (units 168,866–186,175), byte for byte.
+- **Freed:** units 5–168,866, which held the old roads, house numbers, cities, tries, street directory and POIs. Our blocks fill it first (`UnitAllocator`), then continue behind the old end. Gaps get unreferenced filler blocks (an empty 0x0F).
+- **Patched:**
+  - 0x07: records 0–4 (roads, POI layer), and the TMC list count set to 0, because the TMC locations point into the old roads;
+  - 0x0A: the city-trie root, with the country-wide POI tries cut.
+- Nothing kept points into the freed range: the superblock's apparent hits are record-size-table pairs.
+
+**Checks [verified offline]**, read back from the packed bytes:
+- every road and POI tile found from 0x07;
+- every city reached from 0x0A through the 0x0D trie;
+- every street through its 0x0F trie;
+- every street link landing on an S4 record whose name is the street's;
+- every POI reached through its city's category trie, with a road link on an S4 record;
+- every 0x06 record matching its POI's position and ID.
+
+| | Nevada | CA + NV + US highways |
+|---|---|---|
+| Cities / streets | 319 / 67,404 | 4,591 / 587,781 |
+| Street links checked by name | 302,657 | 3,107,762 |
+| POIs | 14,678 (12,574 unnamed left out) | 194,682 (131,159 unnamed left out) |
+| Our destination blocks | 4,305 units | 44,043 units (0x0E 31,927, 0x10 8,167, 0x06 2,491) |
+| carindb | 186,175 units (151,753 filler) | 208,032 units (5 filler) |
+| Disc | 187,141 sectors (41.6 min) | 208,998 sectors (46.4 min, 468 MiB), fits a 74-min CD-R |
+
+OpenCarin reads both packed discs (`tools/phase3a_check.py`, default `--base 5`). On the highways disc it walks all 103,585 blocks, decodes and finds all 75,900 road tiles, and its lookups for San Jose, LA, SF, Las Vegas, Reno and interstates in Phoenix, Denver and Chicago land on our tiles. The highways disc took 8 minutes to build. It shrank from 333,480 to 208,998 sectors: the old roads, street directory and POIs are gone.
+
+**Unverified until the car test:**
+- whether the unit lists and routes to our cities, streets and POIs;
+- how it shows a locality;
+- the filler blocks;
+- cutting TMC.
+
 ### POI categories (2026-11-05, OpenCarin issue #24)
 Block 0x07 section 0 is the list of POI category codes on the disc (6 B records: code, name offset, 0; every name is empty, so the unit uses its own names). On CD-ID 5944 it holds **39 codes**, and the 0x06 POI records (20 B, `T[0x32]`, `+0x0A` category) use exactly those 39 (249,000 records).
 
