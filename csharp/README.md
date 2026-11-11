@@ -15,7 +15,7 @@ Or `dotnet run -c Release --project csharp/src/Osm2Carin.Cli -- <command>`. The 
 | `estimate --region R` | size estimate before downloading |
 | `download --region R` | fetch the `.osm.pbf` (cached in `out/cache`, resumable, MD5-checked) |
 | `model --region R` | road graph + POIs, report, model-based estimate |
-| `tiles --region R` | road levels 0–3 as CARiN tiles, checked, plus viewer data |
+| `tiles --region R` | road levels 0–3 as CARiN tiles, checked, plus viewer data (`out/<region>/viewer`; after `disc`, also the house numbers: purple streets from zoom 15, their numbers from zoom 18, click one for its 0x04 record) |
 | `build --region R [--force] [--estimate-only]` | all of the above; stops when the estimate doesn't fit a CD-R unless `--force` |
 | `disc --region R [--orig <dir>] [--no-house-numbers]` | Phases 3b–3d (C# only): roads, cities, streets, house numbers and POIs packed into the original disc, checked, then `out/<region>/disc/<region>-3d.bin/.cue` (`-3c` with `--no-house-numbers`). House numbers come from the US Census TIGER address ranges, downloaded to `out/cache/tiger` on first use (burn the `.cue`; the ISO it was made from is in `disc/work/`). `--orig` holds `track1.iso` and `audio.raw` from `cd-split` (default `out/phase0/orig`) |
 | `cd-split <bin> <dir>`, `cd-build <iso> <bin> [--audio a.raw]`, `cd-verify <bin>` | raw MODE2/2352 image tools |

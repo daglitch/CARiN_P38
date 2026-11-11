@@ -11,7 +11,11 @@ public static class ParcelReader
 {
     static int U16(byte[] d, int o) => BinaryPrimitives.ReadUInt16BigEndian(d.AsSpan(o));
 
-    public static List<(int attr, List<(long x, long y)> pts)> Polylines(byte[] p, int typ)
+    public static List<(int attr, List<(long x, long y)> pts)> Polylines(byte[] p, int typ) =>
+        Links(p, typ).Select(l => (l.attr, l.pts)).ToList();
+
+    /// <summary>The polylines with k, the index of their section 4 record (start node to end node).</summary>
+    public static List<(int k, int attr, List<(long x, long y)> pts)> Links(byte[] p, int typ)
     {
         var sec = new (int off, int n)[15];
         for (int i = 0; i < 15; i++) sec[i] = (U16(p, 8 + 4 * i), U16(p, 10 + 4 * i));
@@ -27,7 +31,7 @@ public static class ParcelReader
             int o = sec[4].off + size * k;
             links.Add((U16(p, o), U16(p, o + 2), U16(p, o + 4), U16(p, o + 10)));
         }
-        var o2 = new List<(int, List<(long, long)>)>();
+        var o2 = new List<(int, int, List<(long, long)>)>();
         for (int k = 0; k < links.Count; k++)
         {
             var l = links[k];
@@ -37,7 +41,7 @@ public static class ParcelReader
             if (s7 <= l.shape && l.shape <= end && end <= s7End)
                 for (int o = l.shape; o < end; o += 6) pts.Add((x1 + U16(p, o) * 64L, y1 + U16(p, o + 2) * 64L));
             pts.Add((x1 + b.u * 64L, y1 + b.v * 64L));
-            o2.Add((l.attr, pts));
+            o2.Add((k, l.attr, pts));
         }
         return o2;
     }
@@ -157,7 +161,9 @@ public static class Validate
     public static bool HasProblems(JsonObject res, JsonObject problems) =>
         problems.Count > 0 || res.Any(kv => kv.Key.Contains("BROKEN") || kv.Key.Contains("OFF THE") || kv.Key.Contains("NO TILE"));
 
-    /// <summary>Viewer data in the format of tools/carin.py export / streets.</summary>
+    /// <summary>Viewer data in the format of tools/carin.py export / streets. Street cells also get "hn":
+    /// [line, side A start, side B start, side A end, side B end, scheme] for the links with house numbers
+    /// (side A = left of the line's direction), drawn by viewer-hn.js, which is added to the page.</summary>
     public static JsonObject ExportViewer(List<TileSpec> specs, string outDir, string? viewerHtml = null, string? title = null)
     {
         const double Cell = 0.1;
@@ -165,8 +171,10 @@ public static class Validate
         Directory.CreateDirectory(Path.Combine(data, "l0"));
         var per = new Dictionary<int, (List<int> attrs, List<List<double>> lines)> { [1] = (new(), new()), [2] = (new(), new()), [3] = (new(), new()) };
         var cells = new SortedDictionary<string, (List<int> attrs, List<List<long>> lines)>(StringComparer.Ordinal);
+        var cellHn = new Dictionary<string, List<int[]>>();
+        int hnLinks = 0;
         foreach (var sp in specs)
-            foreach (var (attr, pts) in ParcelReader.Polylines(sp.Decoded, sp.BType))
+            foreach (var (k, attr, pts) in ParcelReader.Links(sp.Decoded, sp.BType))
             {
                 if (sp.BType != 0)
                 {
@@ -186,18 +194,26 @@ public static class Validate
                     }
                     string key = $"{(long)Math.Floor((flat[0] / 1e5 + 180) / Cell)}_{(long)Math.Floor((flat[1] / 1e5 + 90) / Cell)}";
                     if (!cells.TryGetValue(key, out var c)) cells[key] = c = (new(), new());
+                    if (sp.Hn != null && k < sp.Hn.Length && sp.Hn[k] is ushort[] h)
+                    {
+                        if (!cellHn.TryGetValue(key, out var hl)) cellHn[key] = hl = new();
+                        hl.Add([c.lines.Count, h[0], h[1], h[2], h[3], h[4]]);
+                        hnLinks++;
+                    }
                     c.attrs.Add(attr); c.lines.Add(flat);
                 }
             }
-        static string Json<T>(List<int> attrs, List<List<T>> lines)
+        static string Json<T>(List<int> attrs, List<List<T>> lines, List<int[]>? hn = null)
         {
             var sb = new StringBuilder("{\"attrs\":[");
             sb.Append(string.Join(',', attrs)).Append("],\"lines\":[");
             sb.Append(string.Join(',', lines.Select(l => "[" + string.Join(',', l.Select(v => Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture))) + "]")));
-            return sb.Append("]}").ToString();
+            sb.Append(']');
+            if (hn != null) sb.Append(",\"hn\":[").Append(string.Join(',', hn.Select(r => "[" + string.Join(',', r) + "]"))).Append(']');
+            return sb.Append('}').ToString();
         }
         foreach (var (lv, d) in per) File.WriteAllText(Path.Combine(data, $"level{lv}.json"), Json(d.attrs, d.lines));
-        foreach (var (k, d) in cells) File.WriteAllText(Path.Combine(data, "l0", k + ".json"), Json(d.attrs, d.lines));
+        foreach (var (k, d) in cells) File.WriteAllText(Path.Combine(data, "l0", k + ".json"), Json(d.attrs, d.lines, cellHn.GetValueOrDefault(k)));
         File.WriteAllText(Path.Combine(data, "l0", "index.json"),
             "{\"cell\": 0.1, \"cells\": [" + string.Join(", ", cells.Keys.Select(k => $"\"{k}\"")) + "], \"format\": \"delta-1e-5\"}");
         if (viewerHtml != null && File.Exists(viewerHtml))
@@ -214,8 +230,15 @@ public static class Validate
                                     "The grey background is the OpenStreetMap basemap, which shows every road, also outside the region; " +
                                     "set its opacity to 0 to see ours alone.</div>");
             }
+            if (hnLinks > 0)
+            {
+                // House numbers: a layer of their own in a script beside the page, which leaves the page as it is.
+                using (var js = typeof(Validate).Assembly.GetManifestResourceStream("viewer-hn.js")!)
+                using (var f = File.Create(Path.Combine(outDir, "viewer-hn.js"))) js.CopyTo(f);
+                html = html.Replace("</body>", "<script src=\"viewer-hn.js\"></script>\n</body>");
+            }
             File.WriteAllText(Path.Combine(outDir, "index.html"), html);
         }
-        return new JsonObject { ["cells"] = cells.Count, ["level1_links"] = per[1].lines.Count, ["level2_links"] = per[2].lines.Count, ["level3_links"] = per[3].lines.Count };
+        return new JsonObject { ["cells"] = cells.Count, ["street_links_with_house_numbers"] = hnLinks, ["level1_links"] = per[1].lines.Count, ["level2_links"] = per[2].lines.Count, ["level3_links"] = per[3].lines.Count };
     }
 }

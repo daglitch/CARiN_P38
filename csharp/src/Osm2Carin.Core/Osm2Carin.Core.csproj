@@ -9,6 +9,8 @@
   <ItemGroup>
     <!-- size-estimate ratios, shared with tools/osm2carin/calibration.json -->
     <None Include="calibration.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- house-number layer the viewer export adds to the page (Phase 3d) -->
+    <EmbeddedResource Include="Roads/viewer-hn.js" LogicalName="viewer-hn.js" />
   </ItemGroup>
 
 </Project>

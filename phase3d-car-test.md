@@ -35,6 +35,15 @@ osm2carin disc --region us/nevada
 - **Numbers are block ranges,** as in most navigation data: e.g. 2201–2299 along a block, interpolated along it. A house is placed in proportion along its block, not at its exact door.
 - Everything else is as on the 3c disc.
 
+## Before the car: the viewer
+
+`disc` also writes the viewer to `out\<region>iewer\` (serve it with `py -m http.server -d <that folder>`):
+- streets with house numbers are purple from zoom 15;
+- from zoom 18 their numbers are written at each end, on each side;
+- click one for its record: side A (left) and side B (right), from start to end, and the scheme.
+
+Look up your own address there first: if the numbers on your street are wrong in the viewer, they will be wrong in the car.
+
 ## Burning (ImgBurn)
 
 1. Write mode, with the `.cue` as the source.
