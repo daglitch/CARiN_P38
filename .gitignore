@@ -12,3 +12,6 @@ third_party/
 # C# build output
 csharp/**/bin/
 csharp/**/obj/
+
+# Claude Code local settings
+.claude/
