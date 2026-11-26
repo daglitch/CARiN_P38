@@ -96,6 +96,7 @@ The C# tests check the output against the Python output and the original disc, b
 
 ## Licence and data
 
+- This project's code and documentation are under the [MIT licence](LICENSE).
 - The original disc image is copyrighted and is not distributed here.
 - Map data comes from [OpenStreetMap](https://www.openstreetmap.org/copyright) (ODbL) through [Geofabrik](https://download.geofabrik.de/). House numbers come from the US Census TIGER/Line address ranges (public domain).
 - [OpenCarin](https://github.com/fdemusso/OpenCarin) is MIT-licensed. It is cloned at build time and is not vendored.
